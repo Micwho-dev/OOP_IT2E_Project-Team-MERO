@@ -1,4 +1,4 @@
-# OOP_Project-Team-MERO
+# OOP_IT2E_Project-Team-MERO
 # Lanos
 # Regulada
 # Polinar
