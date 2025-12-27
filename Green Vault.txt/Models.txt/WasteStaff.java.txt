@@ -1,0 +1,15 @@
+package models;
+
+/**
+ * Represents a Waste Staff user.
+ */
+public class WasteStaff extends AbstractUser {
+    public WasteStaff(String username, String role, String barangay) { 
+        super(username, role, barangay); 
+    }
+    
+    @Override
+    public String getPermissionsSummary() {
+        return "Primary Waste Data Entry and Collection Tracking.";
+    }
+}
