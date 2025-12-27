@@ -1,0 +1,263 @@
+package dao;
+
+import utils.DatabaseConfig;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Data Access Object for User operations.
+ * Handles all database interactions for the users table.
+ */
+public class UserDAO {
+    
+    /**
+     * Creates a new user in the database.
+     * @param username The username
+     * @param password The password
+     * @param role The user's role
+     * @param barangay The user's barangay
+     * @param id The user's ID (can be null for roles that don't require ID)
+     * @return true if successful, false if user already exists
+     * @throws SQLException if database error occurs
+     */
+    public static boolean createUser(String username, String password, String role, String barangay, String id) throws SQLException {
+        String sql = "INSERT INTO users (username, password, role, barangay, id) VALUES (?, ?, ?, ?, ?)";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, username);
+            pstmt.setString(2, password);
+            pstmt.setString(3, role);
+            pstmt.setString(4, barangay);
+            pstmt.setString(5, id); // Can be null
+            
+            int rows = pstmt.executeUpdate();
+            return rows > 0;
+            
+        } catch (SQLException e) {
+            // Check if it's a duplicate key error
+            if (e.getMessage().contains("PRIMARY KEY") || e.getMessage().contains("already exists")) {
+                return false; // User already exists
+            }
+            throw e; // Re-throw other SQL exceptions
+        }
+    }
+    
+    /**
+     * Creates a new user in the database (overloaded method without ID for backward compatibility).
+     * @param username The username
+     * @param password The password
+     * @param role The user's role
+     * @param barangay The user's barangay
+     * @return true if successful, false if user already exists
+     * @throws SQLException if database error occurs
+     */
+    public static boolean createUser(String username, String password, String role, String barangay) throws SQLException {
+        return createUser(username, password, role, barangay, null);
+    }
+    
+    /**
+     * Authenticates a user by checking username and password.
+     * @param username The username
+     * @param password The password
+     * @return The user's role if authentication succeeds, null otherwise
+     * @throws SQLException if database error occurs
+     */
+    public static String authenticateUser(String username, String password) throws SQLException {
+        String sql = "SELECT role FROM users WHERE username = ? AND password = ?";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, username);
+            pstmt.setString(2, password);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("role");
+                }
+            }
+        }
+        
+        return null; // User not found or password incorrect
+    }
+    
+    /**
+     * Gets user information by username.
+     * @param username The username
+     * @return Object array {role, barangay} or null if user not found
+     * @throws SQLException if database error occurs
+     */
+    public static Object[] getUserInfo(String username) throws SQLException {
+        String sql = "SELECT role, barangay FROM users WHERE username = ?";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, username);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return new Object[]{
+                        rs.getString("role"),
+                        rs.getString("barangay")
+                    };
+                }
+            }
+        }
+        
+        return null; // User not found
+    }
+    
+    /**
+     * Gets all users.
+     * @return List of user data {username, password, role, barangay}
+     * @throws SQLException if database error occurs
+     */
+    public static List<Object[]> getAllUsers() throws SQLException {
+        List<Object[]> users = new ArrayList<>();
+        String sql = "SELECT username, password, role, barangay FROM users";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql);
+             ResultSet rs = pstmt.executeQuery()) {
+            
+            while (rs.next()) {
+                users.add(new Object[]{
+                    rs.getString("username"),
+                    rs.getString("password"),
+                    rs.getString("role"),
+                    rs.getString("barangay")
+                });
+            }
+        }
+        
+        return users;
+    }
+    
+    /**
+     * Gets users by role.
+     * @param role The role to filter by
+     * @return List of user data {username, password, role, barangay}
+     * @throws SQLException if database error occurs
+     */
+    public static List<Object[]> getUsersByRole(String role) throws SQLException {
+        List<Object[]> users = new ArrayList<>();
+        String sql = "SELECT username, password, role, barangay FROM users WHERE role = ?";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, role);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    users.add(new Object[]{
+                        rs.getString("username"),
+                        rs.getString("password"),
+                        rs.getString("role"),
+                        rs.getString("barangay")
+                    });
+                }
+            }
+        }
+        
+        return users;
+    }
+    
+    /**
+     * Updates a user's information.
+     * @param username The username
+     * @param password New password (null to keep current)
+     * @param role New role (null to keep current)
+     * @param barangay New barangay (null to keep current)
+     * @return true if successful, false if user not found
+     * @throws SQLException if database error occurs
+     */
+    public static boolean updateUser(String username, String password, String role, String barangay) throws SQLException {
+        // Build dynamic SQL based on what fields to update
+        StringBuilder sql = new StringBuilder("UPDATE users SET ");
+        List<String> updates = new ArrayList<>();
+        List<Object> params = new ArrayList<>();
+        
+        if (password != null) {
+            updates.add("password = ?");
+            params.add(password);
+        }
+        if (role != null) {
+            updates.add("role = ?");
+            params.add(role);
+        }
+        if (barangay != null) {
+            updates.add("barangay = ?");
+            params.add(barangay);
+        }
+        
+        if (updates.isEmpty()) {
+            return false; // Nothing to update
+        }
+        
+        sql.append(String.join(", ", updates));
+        sql.append(" WHERE username = ?");
+        params.add(username);
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql.toString())) {
+            
+            for (int i = 0; i < params.size(); i++) {
+                pstmt.setObject(i + 1, params.get(i));
+            }
+            
+            int rows = pstmt.executeUpdate();
+            return rows > 0;
+        }
+    }
+    
+    /**
+     * Deletes a user from the database.
+     * @param username The username to delete
+     * @return true if successful, false if user not found
+     * @throws SQLException if database error occurs
+     */
+    public static boolean deleteUser(String username) throws SQLException {
+        String sql = "DELETE FROM users WHERE username = ?";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, username);
+            
+            int rows = pstmt.executeUpdate();
+            return rows > 0;
+        }
+    }
+    
+    /**
+     * Checks if a user exists.
+     * @param username The username to check
+     * @return true if user exists, false otherwise
+     * @throws SQLException if database error occurs
+     */
+    public static boolean userExists(String username) throws SQLException {
+        String sql = "SELECT COUNT(*) as count FROM users WHERE username = ?";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, username);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt("count") > 0;
+                }
+            }
+        }
+        
+        return false;
+    }
+}

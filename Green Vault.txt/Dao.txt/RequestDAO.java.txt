@@ -1,0 +1,311 @@
+package dao;
+
+import utils.DatabaseConfig;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Data Access Object for Request operations.
+ * Handles all database interactions for the requests table.
+ */
+public class RequestDAO {
+    
+    /**
+     * Creates a new request.
+     * @param timestamp The request timestamp
+     * @param requester The requester username
+     * @param barangay The barangay
+     * @param requestType The type of request
+     * @param location The location
+     * @param description The description
+     * @param numSacks Number of sacks
+     * @param wasteType Type of waste
+     * @param status The status
+     * @param targetRole The target role
+     * @return The generated ID of the new request, or -1 if failed
+     * @throws SQLException if database error occurs
+     */
+    public static int createRequest(String timestamp, String requester, String barangay, 
+                                    String requestType, String location, String description,
+                                    int numSacks, String wasteType, String status, String targetRole) throws SQLException {
+        String sql = "INSERT INTO requests (timestamp, requester, barangay, request_type, location, description, num_sacks, waste_type, status, target_role) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
+            
+            pstmt.setString(1, timestamp);
+            pstmt.setString(2, requester);
+            pstmt.setString(3, barangay);
+            pstmt.setString(4, requestType);
+            pstmt.setString(5, location);
+            pstmt.setString(6, description);
+            pstmt.setInt(7, numSacks);
+            pstmt.setString(8, wasteType);
+            pstmt.setString(9, status);
+            pstmt.setString(10, targetRole);
+            
+            int rows = pstmt.executeUpdate();
+            
+            if (rows > 0) {
+                try (ResultSet rs = pstmt.getGeneratedKeys()) {
+                    if (rs.next()) {
+                        return rs.getInt(1); // Return generated ID
+                    }
+                }
+            }
+        }
+        
+        return -1; // Failed
+    }
+    
+    /**
+     * Gets all requests.
+     * @return List of requests {id, timestamp, requester, barangay, request_type, location, description, num_sacks, waste_type, status, target_role}
+     * @throws SQLException if database error occurs
+     */
+    public static List<Object[]> getAllRequests() throws SQLException {
+        List<Object[]> requests = new ArrayList<>();
+        String sql = "SELECT id, timestamp, requester, barangay, request_type, location, description, num_sacks, waste_type, status, target_role " +
+                     "FROM requests ORDER BY id DESC";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql);
+             ResultSet rs = pstmt.executeQuery()) {
+            
+            while (rs.next()) {
+                requests.add(new Object[]{
+                    rs.getInt("id"),
+                    rs.getString("timestamp"),
+                    rs.getString("requester"),
+                    rs.getString("barangay"),
+                    rs.getString("request_type"),
+                    rs.getString("location"),
+                    rs.getString("description"),
+                    rs.getInt("num_sacks"),
+                    rs.getString("waste_type"),
+                    rs.getString("status"),
+                    rs.getString("target_role")
+                });
+            }
+        }
+        
+        return requests;
+    }
+    
+    /**
+     * Gets requests by barangay.
+     * @param barangay The barangay to filter by
+     * @return List of requests
+     * @throws SQLException if database error occurs
+     */
+    public static List<Object[]> getRequestsByBarangay(String barangay) throws SQLException {
+        List<Object[]> requests = new ArrayList<>();
+        String sql = "SELECT id, timestamp, requester, barangay, request_type, location, description, num_sacks, waste_type, status, target_role " +
+                     "FROM requests WHERE barangay = ? ORDER BY id DESC";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, barangay);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    requests.add(new Object[]{
+                        rs.getInt("id"),
+                        rs.getString("timestamp"),
+                        rs.getString("requester"),
+                        rs.getString("barangay"),
+                        rs.getString("request_type"),
+                        rs.getString("location"),
+                        rs.getString("description"),
+                        rs.getInt("num_sacks"),
+                        rs.getString("waste_type"),
+                        rs.getString("status"),
+                        rs.getString("target_role")
+                    });
+                }
+            }
+        }
+        
+        return requests;
+    }
+    
+    /**
+     * Gets requests by status.
+     * @param status The status to filter by
+     * @return List of requests
+     * @throws SQLException if database error occurs
+     */
+    public static List<Object[]> getRequestsByStatus(String status) throws SQLException {
+        List<Object[]> requests = new ArrayList<>();
+        String sql = "SELECT id, timestamp, requester, barangay, request_type, location, description, num_sacks, waste_type, status, target_role " +
+                     "FROM requests WHERE status = ? ORDER BY id DESC";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, status);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    requests.add(new Object[]{
+                        rs.getInt("id"),
+                        rs.getString("timestamp"),
+                        rs.getString("requester"),
+                        rs.getString("barangay"),
+                        rs.getString("request_type"),
+                        rs.getString("location"),
+                        rs.getString("description"),
+                        rs.getInt("num_sacks"),
+                        rs.getString("waste_type"),
+                        rs.getString("status"),
+                        rs.getString("target_role")
+                    });
+                }
+            }
+        }
+        
+        return requests;
+    }
+    
+    /**
+     * Gets requests by target role.
+     * @param targetRole The target role to filter by
+     * @return List of requests
+     * @throws SQLException if database error occurs
+     */
+    public static List<Object[]> getRequestsByTargetRole(String targetRole) throws SQLException {
+        List<Object[]> requests = new ArrayList<>();
+        String sql = "SELECT id, timestamp, requester, barangay, request_type, location, description, num_sacks, waste_type, status, target_role " +
+                     "FROM requests WHERE target_role = ? ORDER BY id DESC";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, targetRole);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    requests.add(new Object[]{
+                        rs.getInt("id"),
+                        rs.getString("timestamp"),
+                        rs.getString("requester"),
+                        rs.getString("barangay"),
+                        rs.getString("request_type"),
+                        rs.getString("location"),
+                        rs.getString("description"),
+                        rs.getInt("num_sacks"),
+                        rs.getString("waste_type"),
+                        rs.getString("status"),
+                        rs.getString("target_role")
+                    });
+                }
+            }
+        }
+        
+        return requests;
+    }
+    
+    /**
+     * Gets a request by ID.
+     * @param id The request ID
+     * @return Request data or null if not found
+     * @throws SQLException if database error occurs
+     */
+    public static Object[] getRequestById(int id) throws SQLException {
+        String sql = "SELECT id, timestamp, requester, barangay, request_type, location, description, num_sacks, waste_type, status, target_role " +
+                     "FROM requests WHERE id = ?";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setInt(1, id);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return new Object[]{
+                        rs.getInt("id"),
+                        rs.getString("timestamp"),
+                        rs.getString("requester"),
+                        rs.getString("barangay"),
+                        rs.getString("request_type"),
+                        rs.getString("location"),
+                        rs.getString("description"),
+                        rs.getInt("num_sacks"),
+                        rs.getString("waste_type"),
+                        rs.getString("status"),
+                        rs.getString("target_role")
+                    };
+                }
+            }
+        }
+        
+        return null; // Request not found
+    }
+    
+    /**
+     * Updates a request's status.
+     * @param id The request ID
+     * @param status The new status
+     * @return true if successful, false if request not found
+     * @throws SQLException if database error occurs
+     */
+    public static boolean updateRequestStatus(int id, String status) throws SQLException {
+        String sql = "UPDATE requests SET status = ? WHERE id = ?";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, status);
+            pstmt.setInt(2, id);
+            
+            int rows = pstmt.executeUpdate();
+            return rows > 0;
+        }
+    }
+    
+    /**
+     * Updates a request's target role.
+     * @param id The request ID
+     * @param targetRole The new target role
+     * @return true if successful, false if request not found
+     * @throws SQLException if database error occurs
+     */
+    public static boolean updateRequestTargetRole(int id, String targetRole) throws SQLException {
+        String sql = "UPDATE requests SET target_role = ? WHERE id = ?";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, targetRole);
+            pstmt.setInt(2, id);
+            
+            int rows = pstmt.executeUpdate();
+            return rows > 0;
+        }
+    }
+    
+    /**
+     * Deletes a request.
+     * @param id The request ID to delete
+     * @return true if successful, false if request not found
+     * @throws SQLException if database error occurs
+     */
+    public static boolean deleteRequest(int id) throws SQLException {
+        String sql = "DELETE FROM requests WHERE id = ?";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setInt(1, id);
+            
+            int rows = pstmt.executeUpdate();
+            return rows > 0;
+        }
+    }
+}
