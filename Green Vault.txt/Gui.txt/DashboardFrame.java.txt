@@ -1,0 +1,2470 @@
+package gui;
+
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import services.UserAuthenticationService;
+import services.UserApprovalService;
+import services.WasteDataService;
+import services.RequestService;
+import services.RoleDataFileService;
+import utils.BarangayAreaMapper;
+import dao.UserDAO;
+import dao.WasteRecordDAO;
+import java.sql.SQLException;
+
+/**
+ * Main dashboard frame for authenticated users.
+ * Provides role-based navigation and functionality.
+ */
+public class DashboardFrame extends JFrame {
+    private final String username;
+    private final String role;
+    private final String barangay;
+    private JPanel mainContentPanel;
+    private CardLayout cardLayout;
+    
+    public DashboardFrame(String username, String role, String barangay) {
+        this.username = username;
+        this.role = role;
+        this.barangay = barangay;
+        setTitle("GreenVault - Dashboard | " + role);
+        setSize(1000, 700);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLocationRelativeTo(null);
+        setLayout(new BorderLayout());
+        getContentPane().setBackground(UIConstants.BACKGROUND_GRAY);
+
+        JPanel topBar = new JPanel(new BorderLayout());
+        topBar.setBackground(UIConstants.PRIMARY_GREEN);
+        topBar.setBorder(new EmptyBorder(10, 15, 10, 15));
+        JLabel welcomeLabel = new JLabel("Welcome back, " + username + " (" + role + ")");
+        welcomeLabel.setForeground(Color.WHITE);
+        welcomeLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
+        topBar.add(welcomeLabel, BorderLayout.WEST);
+        add(topBar, BorderLayout.NORTH);
+
+        JPanel sidebar = createSidebar();
+        add(sidebar, BorderLayout.WEST);
+
+        cardLayout = new CardLayout();
+        mainContentPanel = new JPanel(cardLayout);
+        mainContentPanel.setBorder(new EmptyBorder(20, 20, 20, 20));
+        mainContentPanel.setBackground(Color.WHITE); 
+        
+        // Add content panels based on role permissions (role-based access control)
+        mainContentPanel.add(createOverviewPanel(), "OVERVIEW");
+        
+        // Data Entry - Only for Garbage Collector and Barangay Member
+        if (role.equals("Garbage Collector") || role.equals("Barangay Member")) {
+        mainContentPanel.add(createDataEntryPanel(), "DATA_ENTRY"); 
+        }
+        
+        // Records Management - For all roles except Barangay Member
+        if (!role.equals("Barangay Member")) {
+        mainContentPanel.add(createRecordsPanel(), "RECORDS");           
+        }
+        
+        // Reporting - Only for City Officer and Barangay Captain
+        if (role.equals("City Officer") || role.equals("Barangay Captain")) {
+        mainContentPanel.add(createReportingPanel(), "REPORTS");         
+        }
+        
+        // Admin Panel - Admin only
+        if (role.equals("Admin")) {
+        mainContentPanel.add(createAdminPanel(), "ADMIN");
+        }
+        
+        // Request Creation - Only for Barangay Member
+        if (role.equals("Barangay Member")) {
+        mainContentPanel.add(createRequestPanel(), "CREATE_REQUEST");
+        }
+        
+        // View Requests - Only for Barangay Captain
+        if (role.equals("Barangay Captain")) {
+        mainContentPanel.add(createViewRequestsPanel(), "VIEW_REQUESTS");
+        mainContentPanel.add(createBarangayCaptainRequestsPanel(), "VIEW_CAPTAIN_REQUESTS");
+        }
+        
+        // City Officer request panel - City Officer only
+        if (role.equals("City Officer")) {
+        mainContentPanel.add(createCityOfficerRequestsPanel(), "VIEW_CITY_REQUESTS");
+        }
+        
+        // Garbage Collector request panel - Garbage Collector only
+        if (role.equals("Garbage Collector")) {
+        mainContentPanel.add(createGarbageCollectorRequestsPanel(), "VIEW_GARBAGE_REQUESTS");
+        }
+        
+        // Admin-only panels
+        if (role.equals("Admin")) {
+            mainContentPanel.add(createAllUsersPanel(), "ALL_USERS");
+            mainContentPanel.add(createAllWasteRecordsPanel(), "ALL_RECORDS");
+            mainContentPanel.add(createSystemStatsPanel(), "SYSTEM_STATS");
+        }
+
+        add(mainContentPanel, BorderLayout.CENTER);
+        cardLayout.show(mainContentPanel, "OVERVIEW");
+    }
+
+    private JPanel createSidebar() {
+        JPanel sidebar = new JPanel();
+        sidebar.setLayout(new BoxLayout(sidebar, BoxLayout.Y_AXIS));
+        sidebar.setBackground(UIConstants.SIDEBAR_DARK);
+        sidebar.setPreferredSize(new Dimension(240, 700)); 
+        sidebar.setBorder(new EmptyBorder(20, 10, 20, 10));
+
+        JLabel logo = new JLabel("GreenVault");
+        logo.setFont(new Font("Arial", Font.BOLD, 26));
+        logo.setForeground(UIConstants.ACCENT_GREEN);
+        logo.setAlignmentX(Component.CENTER_ALIGNMENT);
+        sidebar.add(logo);
+        sidebar.add(Box.createVerticalStrut(30));
+
+        // 1. Common Dashboard Overview
+        addNavButton(sidebar, "🏠 Dashboard Overview", "OVERVIEW");
+        
+        // 2. Data Entry 
+        if (role.equals("Garbage Collector") || role.equals("Barangay Member")) {
+            addNavButton(sidebar, ➡️ Record Waste Data", "DATA_ENTRY"); 
+        }
+        
+        // 3. Records Management 
+        // Show for all roles except Barangay Member
+        if (!role.equals("Barangay Member")) { 
+             addNavButton(sidebar, "📋 Manage Waste Records", "RECORDS"); 
+        }
+
+        // 4. Reporting/Auditing 
+        if (role.equals("City Officer") || role.equals("Barangay Captain")) {
+            addNavButton(sidebar, "📈 Generate Reports/CSV", "REPORTS"); 
+        }
+        
+        // 6. Request System
+        if (role.equals("Barangay Member")) {
+            addNavButton(sidebar, "📝 Create Request", "CREATE_REQUEST");
+        }
+        
+        // Barangay Captain can now view requests (previously Head of the Area's job)
+        // Captain has two views:
+        // 1) View Requests  -> gikan sa Barangay Members (requestform.txt)
+        // 2) View Requests for Approval -> mga na-forward na nga iyang i-approve para sa City Officer
+        if (role.equals("Barangay Captain")) {
+            addNavButton(sidebar, "📋 View Requests", "VIEW_REQUESTS");
+            addNavButton(sidebar, "Approval for Request", "VIEW_CAPTAIN_REQUESTS");
+        }
+        
+        // City Officer request approval panel
+        if (role.equals("City Officer")) {
+            addNavButton(sidebar, "📋 View Requests for City Officer", "VIEW_CITY_REQUESTS");
+        }
+        
+        // Garbage Collector final processing panel
+        if (role.equals("Garbage Collector")) {
+            addNavButton(sidebar, "📋 View Requests for Garbage Collector", "VIEW_GARBAGE_REQUESTS");
+        }
+        
+        // 5. System Administration (Admin only)
+        if (role.equals("Admin")) {
+             addNavButton(sidebar, "⚙️ System Administration", "ADMIN");
+             addNavButton(sidebar, "👥 View All Users", "ALL_USERS");
+             addNavButton(sidebar, "📊 View All Waste Records", "ALL_RECORDS");
+             addNavButton(sidebar, "📈 System Statistics", "SYSTEM_STATS");
+        }
+        
+        sidebar.add(Box.createVerticalGlue());
+
+        JButton btnLogout = new JButton("🚪 Logout");
+        btnLogout.setMaximumSize(new Dimension(220, 35));
+        btnLogout.setBackground(new Color(200, 70, 70)); 
+        btnLogout.setForeground(Color.WHITE);
+        btnLogout.setAlignmentX(Component.CENTER_ALIGNMENT);
+        btnLogout.addActionListener(e -> {
+            new LoginFrame().setVisible(true);
+            dispose();
+        });
+        sidebar.add(btnLogout);
+        sidebar.add(Box.createVerticalStrut(10));
+
+        return sidebar;
+    }
+
+    private void addNavButton(JPanel sidebar, String text, String cardName) {
+        JButton button = new JButton(text);
+        button.setMaximumSize(new Dimension(220, 40));
+        button.setAlignmentX(Component.CENTER_ALIGNMENT);
+        button.setBackground(new Color(60, 60, 60));
+        button.setForeground(Color.WHITE);
+        button.setFocusPainted(false);
+        button.setBorderPainted(false);
+        button.addActionListener(e -> cardLayout.show(mainContentPanel, cardName));
+        sidebar.add(button);
+        sidebar.add(Box.createVerticalStrut(10));
+    }
+    
+    private JPanel createOverviewPanel() {
+         JPanel panel = new JPanel(new BorderLayout(10, 10));
+         JLabel title = new JLabel("Dashboard Overview | SDG 12 Progress");
+         title.setFont(new Font("Arial", Font.BOLD, 24));
+         panel.add(title, BorderLayout.NORTH);
+         panel.add(new JTextArea("Welcome, " + role + "! Use the sidebar for your assigned tasks."), BorderLayout.CENTER);
+         return panel;
+    }
+
+    private JPanel createDataEntryPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JLabel title = new JLabel("Waste Log Entry Form");
+        title.setFont(new Font("Arial", Font.BOLD, 24));
+        
+        // Add description
+        String descText = "Manually record waste collection data. " +
+            (role.equals("Garbage Collector") ? 
+                "Records will be saved to Waste Logs Records Management." : 
+                "Records will be saved to your waste records.");
+        JLabel description = new JLabel(descText);
+        description.setFont(new Font("Arial", Font.PLAIN, 12));
+        description.setForeground(new Color(100, 100, 100));
+        description.setHorizontalAlignment(JLabel.CENTER);
+        
+        JPanel titlePanel = new JPanel(new BorderLayout());
+        titlePanel.setBorder(new EmptyBorder(0, 0, 10, 0));
+        titlePanel.add(title, BorderLayout.NORTH);
+        titlePanel.add(description, BorderLayout.SOUTH);
+        panel.add(titlePanel, BorderLayout.NORTH);
+        
+        // Form Panel
+        JPanel formPanel = new JPanel(new GridLayout(5, 2, 10, 15));
+        formPanel.setBorder(new EmptyBorder(20, 50, 20, 50));
+        
+        formPanel.add(new JLabel("Date (YYYY-MM-DD):"));
+        JTextField dateField = new JTextField(new SimpleDateFormat("yyyy-MM-dd").format(new Date()));
+        formPanel.add(dateField);
+        
+        formPanel.add(new JLabel("Location:"));
+        // For Barangay Members: show barangay name (no area selection needed)
+        // For other roles: show area selection combo box
+        final JComboBox<String> locationCombo;
+        if (role.equals("Barangay Member")) {
+            // Barangay Members are barangay-based, not area-based
+            // Show barangay name as read-only label
+            JLabel barangayLabel = new JLabel(barangay);
+            barangayLabel.setForeground(new Color(100, 100, 100));
+            formPanel.add(barangayLabel);
+            // Create dummy combo box for consistency (not used for Barangay Members)
+            locationCombo = new JComboBox<>(new String[]{barangay});
+            locationCombo.setVisible(false);
+        } else {
+            // Other roles (Garbage Collector) need area selection
+            String[] areas = BarangayAreaMapper.getAreas(barangay);
+            locationCombo = new JComboBox<>(areas);
+        formPanel.add(locationCombo);
+        }
+        
+        formPanel.add(new JLabel("Weight (kg):"));
+        JTextField weightField = new JTextField();
+        formPanel.add(weightField);
+        
+        formPanel.add(new JLabel("Waste Type:"));
+        JComboBox<String> typeCombo = new JComboBox<>(new String[]{
+            "Malata (Biodegradable)",
+            "Di Malata (Non-Biodegradable)",
+            "Magagamit Pa (Recyclable)",
+            "Hazardous"
+        });
+        formPanel.add(typeCombo);
+        
+        formPanel.add(new JLabel("")); // Spacer
+        JButton submitBtn = new JButton("➕ Add Waste Record");
+        submitBtn.setBackground(UIConstants.ACCENT_GREEN);
+        submitBtn.setForeground(Color.WHITE);
+        submitBtn.addActionListener(e -> {
+            String date = dateField.getText().trim();
+            String location;
+            String weight = weightField.getText().trim();
+            String type = (String) typeCombo.getSelectedItem();
+            
+            // For Barangay Members: use barangay name as location (no area selection)
+            // For other roles: get location from combo box
+            if (role.equals("Barangay Member")) {
+                location = barangay; // Barangay-based, not area-based
+            } else {
+                location = (String) locationCombo.getSelectedItem();
+            }
+            
+            if (date.isEmpty() || weight.isEmpty()) {
+                JOptionPane.showMessageDialog(panel, "Please fill all fields.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            
+            // Validate that a real area is selected (not "Select Area") - only for non-Barangay Members
+            if (!role.equals("Barangay Member") && (location == null || location.equals("Select Area"))) {
+                JOptionPane.showMessageDialog(panel, "Please select a specific area/purok from the list.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            
+            try {
+                double w = Double.parseDouble(weight);
+                if (w <= 0) {
+                    JOptionPane.showMessageDialog(panel, "Weight must be greater than 0.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+                
+                // For Garbage Collector, save to managewasterecord.txt
+                // For other roles, save to their role-specific files
+                if (role.equals("Garbage Collector")) {
+                    RequestService.saveToManageWasteRecord(date, location, w, type, barangay);
+                } else {
+                    WasteDataService.addRecord(role, date, location, w, type);
+                }
+                
+                JOptionPane.showMessageDialog(panel, "Record added successfully!\nDate: " + date + "\nLocation: " + location + "\nWeight: " + w + " kg\nType: " + type, "Success", JOptionPane.INFORMATION_MESSAGE);
+                // Clear fields after successful submission
+                dateField.setText(new SimpleDateFormat("yyyy-MM-dd").format(new Date()));
+                weightField.setText("");
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(panel, "Weight must be a valid number.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(panel, "Error adding record: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                ex.printStackTrace();
+            }
+        });
+        formPanel.add(submitBtn);
+        
+        panel.add(formPanel, BorderLayout.CENTER);
+        return panel;
+    }
+    
+    private JPanel createRecordsPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JLabel title = new JLabel("Waste Logs Records Management");
+        title.setFont(new Font("Arial", Font.BOLD, 24));
+        
+        String[] columns = {"Num", "Date", "Barangay", "Location", "Weight (kg)", "Type", "Role"};
+        DefaultTableModel tableModel = new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return column != 0; // ID not editable
+            }
+        };
+        
+        // Load all records from all roles (except Barangay Member)
+        loadAllWasteRecords(tableModel);
+        
+        JTable table = new JTable(tableModel);
+        // Ensure only one request can be selected/processed at a time
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.setRowHeight(25);
+        table.getTableHeader().setBackground(UIConstants.PRIMARY_GREEN);
+        table.getTableHeader().setForeground(Color.BLACK);
+        table.setSelectionBackground(UIConstants.ACCENT_GREEN);
+        table.setSelectionForeground(Color.WHITE);
+        
+        JPanel topPanel = new JPanel(new BorderLayout());
+        topPanel.add(title, BorderLayout.NORTH);
+        
+        JPanel tableControl = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        
+        JButton editBtn = new JButton("✏️ Save Changes");
+        editBtn.setBackground(new Color(70, 130, 180));
+        editBtn.setForeground(Color.WHITE);
+        editBtn.addActionListener(e -> {
+            try {
+                if (table.isEditing()) {
+                    table.getCellEditor().stopCellEditing();
+                }
+                // Save all Garbage Collector records to managewasterecord.txt
+                // Other role records should be edited from their respective role panels
+                // Column structure: {Num, Date, Barangay, Location, Weight, Type, Role}
+                List<Object[]> gcRecords = new ArrayList<>();
+                for (int i = 0; i < tableModel.getRowCount(); i++) {
+                    String recordRole = (String) tableModel.getValueAt(i, 6); // Role is at index 6
+                    if (recordRole != null && recordRole.equals("Garbage Collector")) {
+                        gcRecords.add(new Object[]{
+                            tableModel.getValueAt(i, 0), // id
+                            tableModel.getValueAt(i, 1), // date
+                            tableModel.getValueAt(i, 3), // location (index 3)
+                            tableModel.getValueAt(i, 4), // weight (index 4)
+                            tableModel.getValueAt(i, 5), // type (index 5)
+                            tableModel.getValueAt(i, 2)  // barangay (index 2)
+                        });
+                    }
+                }
+                if (!gcRecords.isEmpty()) {
+                    RequestService.saveManageWasteRecordsWithBarangay(gcRecords);
+                }
+                JOptionPane.showMessageDialog(panel, "Changes saved! (Note: Only Garbage Collector records are saved here)", "Success", JOptionPane.INFORMATION_MESSAGE);
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(panel, 
+                    "Error saving changes: " + ex.getMessage(), 
+                    "Save Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        
+        JButton deleteBtn = new JButton("🗑️ Delete Selected");
+        deleteBtn.setBackground(new Color(200, 70, 70));
+        deleteBtn.setForeground(Color.WHITE);
+        deleteBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                int confirm = JOptionPane.showConfirmDialog(panel, "Delete this record?", "Confirm Delete", JOptionPane.YES_NO_OPTION);
+                if (confirm == JOptionPane.YES_OPTION) {
+                    try {
+                        int id = (int) tableModel.getValueAt(row, 0);
+                        String recordRole = (String) tableModel.getValueAt(row, 6); // Role is in column 6
+                        
+                        // Delete based on the record's role
+                        if (recordRole != null && recordRole.equals("Garbage Collector")) {
+                            RequestService.deleteManageWasteRecord(id);
+                        } else if (recordRole != null) {
+                            WasteDataService.deleteRecord(recordRole, id);
+                        }
+                        tableModel.removeRow(row);
+                        JOptionPane.showMessageDialog(panel, "Record deleted successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                    } catch (Exception ex) {
+                        JOptionPane.showMessageDialog(panel, 
+                            "Error deleting record: " + ex.getMessage(), 
+                            "Delete Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            } else {
+                JOptionPane.showMessageDialog(panel, "Please select a row to delete.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+        
+        JButton refreshBtn = new JButton("🔄 Refresh");
+        refreshBtn.setBackground(UIConstants.ACCENT_GREEN);
+        refreshBtn.setForeground(Color.WHITE);
+        refreshBtn.addActionListener(e -> {
+            try {
+                tableModel.setRowCount(0);
+                loadAllWasteRecords(tableModel);
+                JOptionPane.showMessageDialog(panel, "Records refreshed successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(panel, 
+                    "Error refreshing records: " + ex.getMessage(), 
+                    "Refresh Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        
+        JTextField searchField = new JTextField(15);
+        JButton searchBtn = new JButton("🔍 Search");
+        searchBtn.addActionListener(e -> {
+            String query = searchField.getText().trim().toLowerCase();
+            tableModel.setRowCount(0);
+            // Load all records and filter by search query (and barangay if Barangay Captain)
+            List<Object[]> allRecords = new ArrayList<>();
+            loadAllWasteRecordsToList(allRecords);
+            String userBarangay = (barangay != null) ? barangay.trim() : "";
+            for (Object[] row : allRecords) {
+                // For Barangay Captain: filter by barangay first (case-insensitive)
+                if (role.equals("Barangay Captain")) {
+                    String recordBarangay = (String) row[2]; // Barangay is at index 2
+                    String recordLocation = (String) row[3]; // Location is at index 3
+                    
+                    boolean matches = recordBarangay != null && 
+                                     recordBarangay.trim().equalsIgnoreCase(userBarangay);
+                    
+                    // If barangay is "N/A" or empty, try to match by location
+                    if (!matches && (recordBarangay == null || recordBarangay.trim().isEmpty() || 
+                        recordBarangay.trim().equalsIgnoreCase("N/A"))) {
+                        if (recordLocation != null) {
+                            String barangayFromLocation = getBarangayFromLocation(recordLocation);
+                            matches = barangayFromLocation.trim().equalsIgnoreCase(userBarangay);
+                        }
+                    }
+                    
+                    if (!matches) {
+                        continue; // Skip records not from this barangay
+                    }
+                }
+                
+                // Then filter by search query
+                boolean matchesQuery = query.isEmpty(); // If query is empty, show all
+                if (!matchesQuery) {
+                    for (Object cell : row) {
+                        if (cell != null && cell.toString().toLowerCase().contains(query)) {
+                            matchesQuery = true;
+                            break;
+                        }
+                    }
+                }
+                if (matchesQuery) {
+                    tableModel.addRow(row);
+                }
+            }
+        });
+
+        // Export button for flat-file (CSV) export of waste records
+        JButton exportWasteBtn = new JButton("📄 Export Waste Records (CSV)");
+        exportWasteBtn.setBackground(UIConstants.PRIMARY_GREEN);
+        exportWasteBtn.setForeground(Color.BLACK);
+        exportWasteBtn.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Save Waste Records as CSV");
+            int result = chooser.showSaveDialog(panel);
+            if (result == JFileChooser.APPROVE_OPTION) {
+                File file = chooser.getSelectedFile();
+                boolean ok = WasteDataService.exportWasteRecordsToCsv(file);
+                if (ok) {
+                    JOptionPane.showMessageDialog(panel,
+                        "Waste records exported to:\n" + file.getAbsolutePath(),
+                        "Export Successful",
+                        JOptionPane.INFORMATION_MESSAGE);
+                } else {
+                    JOptionPane.showMessageDialog(panel,
+                        "Error exporting waste records. Please check console for details.",
+                        "Export Error",
+                        JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+
+        tableControl.add(editBtn);
+        tableControl.add(deleteBtn);
+        tableControl.add(refreshBtn);
+        tableControl.add(exportWasteBtn);
+        tableControl.add(new JLabel("  Search:"));
+        tableControl.add(searchField);
+        tableControl.add(searchBtn);
+        
+        topPanel.add(title, BorderLayout.NORTH);
+        topPanel.add(tableControl, BorderLayout.SOUTH);
+        panel.add(topPanel, BorderLayout.NORTH);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        
+        return panel;
+    }
+
+    private JPanel createReportingPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JLabel title = new JLabel("Official Reporting and Auditing");
+        title.setFont(new Font("Arial", Font.BOLD, 24));
+        
+        // Add description
+        String descText = role.equals("Barangay Captain") 
+            ? "Generate comprehensive reports and export data from waste records in " + barangay + " (excluding Barangay Member records)"
+            : "Generate comprehensive reports and export data from all waste records (excluding Barangay Member records)";
+        JLabel description = new JLabel(descText);
+        description.setFont(new Font("Arial", Font.PLAIN, 12));
+        description.setForeground(new Color(100, 100, 100));
+        description.setHorizontalAlignment(JLabel.CENTER);
+        
+        JPanel titlePanel = new JPanel(new BorderLayout());
+        titlePanel.setBorder(new EmptyBorder(0, 0, 10, 0));
+        titlePanel.add(title, BorderLayout.NORTH);
+        titlePanel.add(description, BorderLayout.SOUTH);
+        panel.add(titlePanel, BorderLayout.NORTH);
+        
+        JTextArea reportArea = new JTextArea();
+        reportArea.setEditable(false);
+        reportArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
+        
+        JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        
+        JButton summaryBtn = new JButton("📊 Generate Summary Report");
+        summaryBtn.setBackground(UIConstants.PRIMARY_GREEN);
+        summaryBtn.setForeground(Color.WHITE);
+        summaryBtn.addActionListener(e -> {
+            StringBuilder sb = new StringBuilder();
+            sb.append("========================================\n");
+            sb.append("   GREENVAULT WASTE MANAGEMENT REPORT\n");
+            sb.append("   Generated: ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())).append("\n");
+            sb.append("========================================\n\n");
+            
+            // Load all records from all roles (except Barangay Member)
+            List<Object[]> allRecords = new ArrayList<>();
+            loadAllWasteRecordsToList(allRecords);
+            
+            // Filter by barangay only if user is Barangay Captain
+            List<Object[]> filteredRecords = new ArrayList<>();
+            String userBarangay = (barangay != null) ? barangay.trim() : "";
+            for (Object[] row : allRecords) {
+                if (role.equals("Barangay Captain")) {
+                    String recordBarangay = (String) row[2]; // Barangay is at index 2
+                    String recordLocation = (String) row[3]; // Location is at index 3
+                    
+                    boolean matches = recordBarangay != null && 
+                                     recordBarangay.trim().equalsIgnoreCase(userBarangay);
+                    
+                    // If barangay is "N/A" or empty, try to match by location
+                    if (!matches && (recordBarangay == null || recordBarangay.trim().isEmpty() || 
+                        recordBarangay.trim().equalsIgnoreCase("N/A"))) {
+                        if (recordLocation != null) {
+                            String barangayFromLocation = getBarangayFromLocation(recordLocation);
+                            matches = barangayFromLocation.trim().equalsIgnoreCase(userBarangay);
+                        }
+                    }
+                    
+                    if (matches) {
+                        filteredRecords.add(row);
+                    }
+                } else {
+                    filteredRecords.add(row);
+                }
+            }
+            
+            double totalWeight = 0;
+            Map<String, Double> byType = new HashMap<>();
+            Map<String, Double> byLocation = new HashMap<>();
+            Map<String, Integer> byRole = new HashMap<>();
+            
+            for (Object[] row : filteredRecords) {
+                double weight = (double) row[4]; // Weight is at index 4
+                String type = (String) row[5]; // Type is at index 5
+                String location = (String) row[3]; // Location is at index 3
+                String recordRole = row.length > 6 ? (String) row[6] : "Unknown"; // Role is at index 6
+                
+                totalWeight += weight;
+                byType.put(type, byType.getOrDefault(type, 0.0) + weight);
+                byLocation.put(location, byLocation.getOrDefault(location, 0.0) + weight);
+                byRole.put(recordRole, byRole.getOrDefault(recordRole, 0) + 1);
+            }
+            
+            if (role.equals("Barangay Captain")) {
+                sb.append("BARANGAY: ").append(barangay).append("\n");
+            }
+            sb.append("TOTAL RECORDS: ").append(filteredRecords.size()).append("\n");
+            sb.append("TOTAL WEIGHT: ").append(String.format("%.2f", totalWeight)).append(" kg\n\n");
+            
+            sb.append("BY WASTE TYPE:\n");
+            for (Map.Entry<String, Double> entry : byType.entrySet()) {
+                sb.append("  - ").append(entry.getKey()).append(": ").append(String.format("%.2f", entry.getValue())).append(" kg\n");
+            }
+            
+            sb.append("\nBY LOCATION:\n");
+            for (Map.Entry<String, Double> entry : byLocation.entrySet()) {
+                sb.append("  - ").append(entry.getKey()).append(": ").append(String.format("%.2f", entry.getValue())).append(" kg\n");
+            }
+            
+            sb.append("\nBY ROLE:\n");
+            for (Map.Entry<String, Integer> entry : byRole.entrySet()) {
+                sb.append("  - ").append(entry.getKey()).append(": ").append(entry.getValue()).append(" records\n");
+            }
+            
+            reportArea.setText(sb.toString());
+        });
+        
+        JButton exportCsvBtn = new JButton("⬇️ Export to CSV");
+        exportCsvBtn.setBackground(UIConstants.ACCENT_GREEN);
+        exportCsvBtn.setForeground(Color.WHITE);
+        exportCsvBtn.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setSelectedFile(new java.io.File("waste_records_report.csv"));
+            if (chooser.showSaveDialog(panel) == JFileChooser.APPROVE_OPTION) {
+                try (FileWriter writer = new FileWriter(chooser.getSelectedFile())) {
+                    writer.write("ID,Date,Barangay,Location,Weight(kg),Type,Role\n");
+                    // Load all records from all roles (except Barangay Member)
+                    List<Object[]> allRecords = new ArrayList<>();
+                    loadAllWasteRecordsToList(allRecords);
+                    int count = 0;
+                    String userBarangay = (barangay != null) ? barangay.trim() : "";
+                    for (Object[] row : allRecords) {
+                        // Filter by barangay only if user is Barangay Captain (case-insensitive)
+                        if (role.equals("Barangay Captain")) {
+                            String recordBarangay = (String) row[2]; // Barangay is at index 2
+                            String recordLocation = (String) row[3]; // Location is at index 3
+                            
+                            boolean matches = recordBarangay != null && 
+                                             recordBarangay.trim().equalsIgnoreCase(userBarangay);
+                            
+                            // If barangay is "N/A" or empty, try to match by location
+                            if (!matches && (recordBarangay == null || recordBarangay.trim().isEmpty() || 
+                                recordBarangay.trim().equalsIgnoreCase("N/A"))) {
+                                if (recordLocation != null) {
+                                    String barangayFromLocation = getBarangayFromLocation(recordLocation);
+                                    matches = barangayFromLocation.trim().equalsIgnoreCase(userBarangay);
+                                }
+                            }
+                            
+                            if (!matches) {
+                                continue; // Skip records not from this barangay
+                            }
+                        }
+                        // Format: {id, date, barangay, location, weight, type, role}
+                        writer.write(row[0] + "," + row[1] + "," + row[2] + "," + row[3] + "," + row[4] + "," + row[5] + "," + (row.length > 6 ? row[6] : "N/A") + "\n");
+                        count++;
+                    }
+                    String message = role.equals("Barangay Captain")
+                        ? "CSV exported successfully! Total records from " + barangay + ": " + count
+                        : "CSV exported successfully! Total records: " + count;
+                    JOptionPane.showMessageDialog(panel, message, "Export Complete", JOptionPane.INFORMATION_MESSAGE);
+                } catch (IOException ex) {
+                    JOptionPane.showMessageDialog(panel, "Error exporting: " + ex.getMessage(), "Export Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+        
+        JButton exportTxtBtn = new JButton("📄 Export to Text");
+        exportTxtBtn.setBackground(new Color(70, 130, 180));
+        exportTxtBtn.setForeground(Color.WHITE);
+        exportTxtBtn.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setSelectedFile(new java.io.File("waste_records_report.txt"));
+            if (chooser.showSaveDialog(panel) == JFileChooser.APPROVE_OPTION) {
+                exportToTextFile(chooser.getSelectedFile(), panel, role, barangay);
+            }
+        });
+        
+        JButton importCsvBtn = new JButton("⬆️ Import from CSV");
+        importCsvBtn.setBackground(new Color(255, 140, 0));
+        importCsvBtn.setForeground(Color.WHITE);
+        importCsvBtn.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("CSV Files", "csv"));
+            if (chooser.showOpenDialog(panel) == JFileChooser.APPROVE_OPTION) {
+                importFromCSV(chooser.getSelectedFile(), panel);
+            }
+        });
+        
+        controls.add(summaryBtn);
+
+        // Button to open separate ReportsFrame window (4th distinct window)
+        // Only show for City Officer, not for Barangay Captain
+        if (!role.equals("Barangay Captain")) {
+            JButton openReportsWindowBtn = new JButton("🪟 Open Reports Window");
+            openReportsWindowBtn.setBackground(UIConstants.ACCENT_GREEN);
+            openReportsWindowBtn.setForeground(Color.BLACK);
+            openReportsWindowBtn.addActionListener(e -> {
+                ReportsFrame reportsFrame = new ReportsFrame(username, role, barangay);
+                reportsFrame.setVisible(true);
+            });
+            controls.add(openReportsWindowBtn);
+        }
+        controls.add(exportCsvBtn);
+        controls.add(exportTxtBtn);
+        controls.add(importCsvBtn);
+        panel.add(controls, BorderLayout.SOUTH);
+        panel.add(new JScrollPane(reportArea), BorderLayout.CENTER);
+        
+        return panel;
+    }
+
+    private JPanel createAdminPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JLabel title = new JLabel("System Administration Panel - User Approval");
+        title.setFont(new Font("Arial", Font.BOLD, 24));
+        panel.add(title, BorderLayout.NORTH);
+        
+        String[] columns = {"Username", "Role", "ID", "Status"};
+        DefaultTableModel tableModel = new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false; // Read-only table
+            }
+        };
+        
+        JTable table = new JTable(tableModel);
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.setRowHeight(25);
+        table.getTableHeader().setBackground(UIConstants.PRIMARY_GREEN);
+        table.getTableHeader().setForeground(Color.BLACK);
+        table.setSelectionBackground(UIConstants.ACCENT_GREEN);
+        table.setSelectionForeground(Color.WHITE);
+        
+        // Load pending registrations
+        refreshPendingTable(tableModel);
+        
+        JPanel topPanel = new JPanel(new BorderLayout());
+        
+        JPanel tableControl = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        
+        JButton approveBtn = new JButton("✅ Approve");
+        approveBtn.setBackground(new Color(34, 139, 34));
+        approveBtn.setForeground(Color.WHITE);
+        approveBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                String username = (String) tableModel.getValueAt(row, 0);
+                
+                // Get user data from pending (try both Pending and Approved status)
+                Object[] userData = UserApprovalService.getPendingUserData(username);
+                if (userData == null) {
+                    // If not found in Pending, try to get from any status (for already approved users)
+                    userData = UserApprovalService.getUserDataByUsername(username);
+                }
+                
+                if (userData != null) {
+                    // userData format: {password, role, id}
+                    String role = (String) userData[1];
+                    
+                    // Check if user already exists in the system (safety check)
+                    Object[] existingUser = UserAuthenticationService.getUserInfo(username);
+                    if (existingUser != null) {
+                        JOptionPane.showMessageDialog(panel, 
+                            "User " + username + " already exists in the system!", 
+                            "User Already Exists", JOptionPane.WARNING_MESSAGE);
+                        refreshPendingTable(tableModel);
+                        return;
+                    }
+                    
+                    // Approve AND register the user in one service call.
+                    // This will:
+                    //  1) Update status to 'Approved' in pending_registrations
+                    //  2) Register user to the correct role .txt file
+                    //  3) Create the user in the main users table
+                    if (UserApprovalService.approveAndRegister(username)) {
+                            refreshPendingTable(tableModel);
+                            JOptionPane.showMessageDialog(panel, 
+                                "User " + username + " (" + role + ") has been approved and registered to " + 
+                                RoleDataFileService.getDataFilePath(role) + "!", 
+                                "Approval Successful", JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(panel, "Error approving registration.", 
+                            "Approval Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                } else {
+                    JOptionPane.showMessageDialog(panel, 
+                        "User data not found in pending registrations.", 
+                        "Data Not Found", JOptionPane.WARNING_MESSAGE);
+                }
+            } else {
+                JOptionPane.showMessageDialog(panel, "Please select a registration to approve.", 
+                    "No Selection", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+        
+        JButton rejectBtn = new JButton("❌ Reject");
+        rejectBtn.setBackground(new Color(200, 70, 70));
+        rejectBtn.setForeground(Color.WHITE);
+        rejectBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                String username = (String) tableModel.getValueAt(row, 0);
+                int confirm = JOptionPane.showConfirmDialog(panel, 
+                    "Reject registration for " + username + "?", 
+                    "Confirm Rejection", JOptionPane.YES_NO_OPTION);
+                
+                if (confirm == JOptionPane.YES_OPTION) {
+                    if (UserApprovalService.rejectRegistration(username)) {
+                        refreshPendingTable(tableModel);
+                        JOptionPane.showMessageDialog(panel, "Registration rejected.", 
+                            "Rejection Successful", JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(panel, "Error rejecting registration.", 
+                            "Rejection Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            } else {
+                JOptionPane.showMessageDialog(panel, "Please select a registration to reject.", 
+                    "No Selection", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+        
+        JButton refreshBtn = new JButton("🔄 Refresh");
+        refreshBtn.setBackground(UIConstants.ACCENT_GREEN);
+        refreshBtn.setForeground(Color.WHITE);
+        refreshBtn.addActionListener(e -> refreshPendingTable(tableModel));
+        
+        tableControl.add(approveBtn);
+        tableControl.add(rejectBtn);
+        tableControl.add(refreshBtn);
+        
+        topPanel.add(tableControl, BorderLayout.SOUTH);
+        panel.add(topPanel, BorderLayout.NORTH);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        
+        return panel;
+    }
+    
+    private void refreshPendingTable(DefaultTableModel tableModel) {
+        try {
+            tableModel.setRowCount(0);
+            for (Object[] row : UserApprovalService.getPendingRegistrations()) {
+                // row format: {username, password, role, id, status}
+                tableModel.addRow(new Object[]{row[0], row[2], row[3], row[4]});
+            }
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(null, 
+                "Error refreshing pending registrations: " + e.getMessage(), 
+                "Refresh Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    private JPanel createRequestPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JLabel title = new JLabel("Create Request to Barangay Captain");
+        title.setFont(new Font("Arial", Font.BOLD, 24));
+        panel.add(title, BorderLayout.NORTH);
+        
+        // Main container with CardLayout for different request type forms
+        CardLayout cardLayout = new CardLayout();
+        JPanel cardPanel = new JPanel(cardLayout);
+        cardPanel.setBorder(new EmptyBorder(20, 50, 20, 50));
+        
+        // Common fields
+        JLabel barangayLabel = new JLabel(barangay);
+        barangayLabel.setForeground(new Color(100, 100, 100));
+        
+        // Request Type Combo Box (outside card panel)
+        JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 10));
+        topPanel.add(new JLabel("Request Type:"));
+        JComboBox<String> typeCombo = new JComboBox<>(new String[]{
+            "Waste Collection", 
+            "Equipment Request"
+        });
+        topPanel.add(typeCombo);
+        topPanel.add(new JLabel("Your Barangay:"));
+        topPanel.add(barangayLabel);
+        
+        // ========== WASTE COLLECTION FORM ==========
+        JPanel wasteCollectionPanel = new JPanel(new GridLayout(7, 2, 10, 15));
+        wasteCollectionPanel.setBorder(new EmptyBorder(20, 0, 20, 0));
+        
+        wasteCollectionPanel.add(new JLabel("Number of Sacks (Pila ka Sako):"));
+        JTextField sacksField = new JTextField();
+        wasteCollectionPanel.add(sacksField);
+        
+        wasteCollectionPanel.add(new JLabel("Weight (kg):"));
+        JTextField weightField = new JTextField();
+        wasteCollectionPanel.add(weightField);
+        
+        wasteCollectionPanel.add(new JLabel("Waste Type:"));
+        JComboBox<String> wasteTypeCombo = new JComboBox<>(new String[]{
+            "Malata (Biodegradable)",
+            "Di Malata (Non-Biodegradable)",
+            "Magagamit Pa (Recyclable)",
+            "Hazardous"
+        });
+        wasteCollectionPanel.add(wasteTypeCombo);
+        
+        wasteCollectionPanel.add(new JLabel("Location:"));
+        JTextField wasteLocationField = new JTextField();
+        wasteCollectionPanel.add(wasteLocationField);
+        
+        wasteCollectionPanel.add(new JLabel("Description:"));
+        JTextArea wasteDescArea = new JTextArea(4, 30);
+        wasteDescArea.setLineWrap(true);
+        wasteDescArea.setWrapStyleWord(true);
+        JScrollPane wasteDescScroll = new JScrollPane(wasteDescArea);
+        wasteCollectionPanel.add(wasteDescScroll);
+        
+        wasteCollectionPanel.add(new JLabel("")); // Spacer
+        JButton wasteSubmitBtn = new JButton("📤 Submit Request");
+        wasteSubmitBtn.setBackground(UIConstants.ACCENT_GREEN);
+        wasteSubmitBtn.setForeground(Color.WHITE);
+        wasteCollectionPanel.add(wasteSubmitBtn);
+        
+        // ========== EQUIPMENT REQUEST FORM ==========
+        JPanel equipmentPanel = new JPanel(new GridLayout(6, 2, 10, 15));
+        equipmentPanel.setBorder(new EmptyBorder(20, 0, 20, 0));
+        
+        equipmentPanel.add(new JLabel("Equipment Type:"));
+        JComboBox<String> equipmentTypeCombo = new JComboBox<>(new String[]{
+            "Waste Bins",
+            "Collection Truck",
+            "Safety Equipment",
+            "Tools",
+            "Other Equipment"
+        });
+        equipmentPanel.add(equipmentTypeCombo);
+        
+        equipmentPanel.add(new JLabel("Quantity:"));
+        JTextField equipmentQtyField = new JTextField();
+        equipmentPanel.add(equipmentQtyField);
+        
+        equipmentPanel.add(new JLabel("Specifications/Details:"));
+        JTextArea equipmentSpecArea = new JTextArea(3, 30);
+        equipmentSpecArea.setLineWrap(true);
+        equipmentSpecArea.setWrapStyleWord(true);
+        JScrollPane equipmentSpecScroll = new JScrollPane(equipmentSpecArea);
+        equipmentPanel.add(equipmentSpecScroll);
+        
+        equipmentPanel.add(new JLabel("Purpose/Reason:"));
+        JTextArea equipmentDescArea = new JTextArea(3, 30);
+        equipmentDescArea.setLineWrap(true);
+        equipmentDescArea.setWrapStyleWord(true);
+        JScrollPane equipmentDescScroll = new JScrollPane(equipmentDescArea);
+        equipmentPanel.add(equipmentDescScroll);
+        
+        equipmentPanel.add(new JLabel("")); // Spacer
+        JButton equipmentSubmitBtn = new JButton("📤 Submit Request");
+        equipmentSubmitBtn.setBackground(UIConstants.ACCENT_GREEN);
+        equipmentSubmitBtn.setForeground(Color.WHITE);
+        equipmentPanel.add(equipmentSubmitBtn);
+        
+        // Add all panels to card layout
+        cardPanel.add(wasteCollectionPanel, "Waste Collection");
+        cardPanel.add(equipmentPanel, "Equipment Request");
+        
+        // Switch panels when request type changes
+        typeCombo.addActionListener(e -> {
+            String selectedType = (String) typeCombo.getSelectedItem();
+            cardLayout.show(cardPanel, selectedType);
+        });
+        
+        // Submit button actions
+        wasteSubmitBtn.addActionListener(e -> {
+            String location = wasteLocationField.getText().trim();
+            String description = wasteDescArea.getText().trim();
+            String sacksText = sacksField.getText().trim();
+            String weightText = weightField.getText().trim();
+            String wasteType = (String) wasteTypeCombo.getSelectedItem();
+            
+            if (location.isEmpty()) {
+                JOptionPane.showMessageDialog(panel, "Please enter a location for your request.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            
+            if (weightText.isEmpty()) {
+                JOptionPane.showMessageDialog(panel, "Please enter the weight (kg) for your request.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            
+            if (description.isEmpty()) {
+                JOptionPane.showMessageDialog(panel, "Please enter a description for your request.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            
+            int numSacks = 0;
+            if (!sacksText.isEmpty()) {
+                try {
+                    numSacks = Integer.parseInt(sacksText);
+                    if (numSacks < 0) {
+                        JOptionPane.showMessageDialog(panel, "Number of sacks must be 0 or greater.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                        return;
+                    }
+                } catch (NumberFormatException ex) {
+                    JOptionPane.showMessageDialog(panel, "Number of sacks must be a valid number.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+            }
+            
+            double weight = 0.0;
+            try {
+                weight = Double.parseDouble(weightText);
+                if (weight <= 0) {
+                    JOptionPane.showMessageDialog(panel, "Weight must be greater than 0.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(panel, "Weight must be a valid number.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            
+            // Include weight in the description
+            String fullDescription = String.format("Weight: %.2f kg | %s", weight, description);
+            
+            boolean success = RequestService.createRequest(username, barangay, "Waste Collection", location, fullDescription, numSacks, wasteType);
+            if (success) {
+                JOptionPane.showMessageDialog(panel, "Request submitted successfully! The Barangay Captain will review it.", "Success", JOptionPane.INFORMATION_MESSAGE);
+                wasteLocationField.setText("");
+                wasteDescArea.setText("");
+                sacksField.setText("");
+                weightField.setText("");
+            } else {
+                JOptionPane.showMessageDialog(panel, "Error submitting request. Please try again.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        
+        equipmentSubmitBtn.addActionListener(e -> {
+            String equipmentType = (String) equipmentTypeCombo.getSelectedItem();
+            String qtyText = equipmentQtyField.getText().trim();
+            String specs = equipmentSpecArea.getText().trim();
+            String purpose = equipmentDescArea.getText().trim();
+            
+            if (purpose.isEmpty()) {
+                JOptionPane.showMessageDialog(panel, "Please enter the purpose/reason for the equipment request.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            
+            int quantity = 0;
+            if (!qtyText.isEmpty()) {
+                try {
+                    quantity = Integer.parseInt(qtyText);
+                    if (quantity < 1) {
+                        JOptionPane.showMessageDialog(panel, "Quantity must be at least 1.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                        return;
+                    }
+                } catch (NumberFormatException ex) {
+                    JOptionPane.showMessageDialog(panel, "Quantity must be a valid number.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+            }
+            
+            String description = String.format("Equipment: %s | Quantity: %d | Specs: %s | Purpose: %s", 
+                equipmentType, quantity, specs.isEmpty() ? "N/A" : specs, purpose);
+            
+            boolean success = RequestService.createRequest(username, barangay, "Equipment Request", "N/A", description, 0, "N/A");
+            if (success) {
+                JOptionPane.showMessageDialog(panel, "Request submitted successfully! The Barangay Captain will review it.", "Success", JOptionPane.INFORMATION_MESSAGE);
+                equipmentQtyField.setText("");
+                equipmentSpecArea.setText("");
+                equipmentDescArea.setText("");
+            } else {
+                JOptionPane.showMessageDialog(panel, "Error submitting request. Please try again.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        
+        // Main container
+        JPanel mainPanel = new JPanel(new BorderLayout());
+        mainPanel.add(topPanel, BorderLayout.NORTH);
+        mainPanel.add(cardPanel, BorderLayout.CENTER);
+        
+        panel.add(mainPanel, BorderLayout.CENTER);
+        
+        // Show initial panel
+        cardLayout.show(cardPanel, "Waste Collection");
+        
+        return panel;
+    }
+    
+    private JPanel createViewRequestsPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JLabel title = new JLabel("View Requests");
+        title.setFont(new Font("Arial", Font.BOLD, 24));
+        panel.add(title, BorderLayout.NORTH);
+        
+        String[] columns = {"ID", "Date/Time", "Requester", "Barangay", "Type", "Location", "Description", "Sacks", "Weight (kg)", "Waste Type", "Status"};
+        DefaultTableModel tableModel = new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false; // Read-only table
+            }
+        };
+        
+        JTable table = new JTable(tableModel);
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.setRowHeight(25);
+        table.getTableHeader().setBackground(UIConstants.PRIMARY_GREEN);
+        table.getTableHeader().setForeground(Color.BLACK);
+        table.setSelectionBackground(UIConstants.ACCENT_GREEN);
+        table.setSelectionForeground(Color.WHITE);
+        
+        // Load requests once when opening the view
+        refreshRequestsTable(tableModel);
+        
+        // Pure view-only table (no action buttons)
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        
+        return panel;
+    }
+    
+    private void refreshRequestsTable(DefaultTableModel tableModel) {
+        try {
+            tableModel.setRowCount(0);
+            for (Object[] row : RequestService.getBarangayRequests(barangay)) {
+                // Row format: {id, timestamp, requester, barangay, type, location, description, numSacks, wasteType, status}
+                // Need to add weight column: {id, timestamp, requester, barangay, type, location, description, numSacks, weight, wasteType, status}
+                String description = (String) row[6];
+                String weight = extractWeightFromDescription(description);
+                String cleanDescription = removeWeightFromDescription(description);
+                
+                Object[] newRow = new Object[]{
+                    row[0],  // id
+                    row[1],  // timestamp
+                    row[2],  // requester
+                    row[3],  // barangay
+                    row[4],  // type
+                    row[5],  // location
+                    cleanDescription,  // description (without weight prefix)
+                    row[7],  // numSacks
+                    weight,  // weight (extracted)
+                    row[8],  // wasteType
+                    row[9]   // status
+                };
+                tableModel.addRow(newRow);
+            }
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(null, 
+                "Error refreshing requests: " + e.getMessage(), 
+                "Refresh Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    private JPanel createBarangayCaptainRequestsPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JLabel title = new JLabel("View Requests for Barangay Captain");
+        title.setFont(new Font("Arial", Font.BOLD, 24));
+        panel.add(title, BorderLayout.NORTH);
+        
+        String[] columns = {"ID", "Date/Time", "Requester", "Barangay", "Type", "Location", "Description", "Sacks", "Weight (kg)", "Waste Type", "Status"};
+        DefaultTableModel tableModel = new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false; // Read-only table
+            }
+        };
+        
+        JTable table = new JTable(tableModel);
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.setRowHeight(25);
+        table.getTableHeader().setBackground(UIConstants.PRIMARY_GREEN);
+        table.getTableHeader().setForeground(Color.BLACK);
+        table.setSelectionBackground(UIConstants.ACCENT_GREEN);
+        table.setSelectionForeground(Color.WHITE);
+        
+        // Load requests (from Barangay Member request file for this captain's barangay)
+        refreshCaptainRequestsTable(tableModel);
+        
+        JPanel topPanel = new JPanel(new BorderLayout());
+        
+        JPanel tableControl = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        
+        JButton approveBtn = new JButton("✅ Approve Forward to City Officer");
+        approveBtn.setBackground(new Color(34, 139, 34));
+        approveBtn.setForeground(Color.WHITE);
+        approveBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                // Get request data directly from the table row
+                int requestId = (Integer) tableModel.getValueAt(row, 0);
+                String timestamp = (String) tableModel.getValueAt(row, 1);
+                
+                // Get request data from the Barangay Member requests list using both ID and timestamp
+                List<Object[]> allRequests = RequestService.getBarangayRequests(barangay);
+                Object[] requestData = null;
+                for (Object[] req : allRequests) {
+                    if ((Integer) req[0] == requestId && req[1].equals(timestamp)) {
+                        requestData = req;
+                        break;
+                    }
+                }
+                
+                if (requestData != null) {
+                    // Update status in Barangay Member request file
+                    boolean success = RequestService.updateRequestStatus(barangay, requestId, timestamp, "Approved by Barangay Captain");
+                    
+                    if (success) {
+                        // Forward directly to City Officer and remove from Barangay Member file
+                        boolean forwarded = RequestService.forwardFromMemberToCityOfficer(barangay, requestData);
+                        if (forwarded) {
+                            refreshCaptainRequestsTable(tableModel);
+                            JOptionPane.showMessageDialog(panel, 
+                                "Request approved and forwarded to City Officer!", 
+                                "Success", JOptionPane.INFORMATION_MESSAGE);
+                        } else {
+                            refreshCaptainRequestsTable(tableModel);
+                            JOptionPane.showMessageDialog(panel, 
+                                "Request approved but error forwarding to City Officer.", 
+                                "Warning", JOptionPane.WARNING_MESSAGE);
+                        }
+                    } else {
+                        JOptionPane.showMessageDialog(panel, 
+                            "Error updating request status. Please try again.", 
+                            "Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                } else {
+                    JOptionPane.showMessageDialog(panel, 
+                        "Request not found. Please refresh and try again.", 
+                        "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            } else {
+                JOptionPane.showMessageDialog(panel, "Please select a request to approve.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+        
+        JButton rejectBtn = new JButton("❌ Reject");
+        rejectBtn.setBackground(new Color(200, 70, 70));
+        rejectBtn.setForeground(Color.WHITE);
+        rejectBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                int requestId = (Integer) tableModel.getValueAt(row, 0);
+                String timestamp = (String) tableModel.getValueAt(row, 1);
+                boolean success = RequestService.updateRequestStatus(barangay, requestId, timestamp, "Rejected by Barangay Captain");
+                if (success) {
+                    refreshCaptainRequestsTable(tableModel);
+                    JOptionPane.showMessageDialog(panel, "Request rejected.", "Success", JOptionPane.INFORMATION_MESSAGE);
+                } else {
+                    JOptionPane.showMessageDialog(panel, 
+                        "Error rejecting request. Please try again.", 
+                        "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            } else {
+                JOptionPane.showMessageDialog(panel, "Please select a request to reject.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+        
+        JButton completeBtn = new JButton("✓ Complete");
+        completeBtn.setBackground(new Color(70, 130, 180));
+        completeBtn.setForeground(Color.WHITE);
+        completeBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                int requestId = (Integer) tableModel.getValueAt(row, 0);
+                String timestamp = (String) tableModel.getValueAt(row, 1);
+                boolean success = RequestService.updateRequestStatus(barangay, requestId, timestamp, "Completed by Barangay Captain");
+                if (success) {
+                    refreshCaptainRequestsTable(tableModel);
+                    JOptionPane.showMessageDialog(panel, "Request marked as completed!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                } else {
+                    JOptionPane.showMessageDialog(panel, 
+                        "Error completing request. Please try again.", 
+                        "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            } else {
+                JOptionPane.showMessageDialog(panel, "Please select a request to complete.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+        
+        JButton refreshBtn = new JButton("🔄 Refresh");
+        refreshBtn.setBackground(UIConstants.ACCENT_GREEN);
+        refreshBtn.setForeground(Color.WHITE);
+        refreshBtn.addActionListener(e -> refreshCaptainRequestsTable(tableModel));
+        
+        tableControl.add(approveBtn);
+        tableControl.add(rejectBtn);
+        tableControl.add(completeBtn);
+        tableControl.add(refreshBtn);
+        
+        topPanel.add(tableControl, BorderLayout.SOUTH);
+        panel.add(topPanel, BorderLayout.NORTH);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        
+        return panel;
+    }
+    
+    /**
+     * Helper method to extract weight from description.
+     * Description format: "Weight: X.XX kg | [rest of description]"
+     * @param description The description string
+     * @return Weight as string, or "N/A" if not found
+     */
+    private String extractWeightFromDescription(String description) {
+        if (description == null || description.isEmpty()) {
+            return "N/A";
+        }
+        // Look for pattern "Weight: X.XX kg"
+        int weightIndex = description.indexOf("Weight:");
+        if (weightIndex != -1) {
+            int start = weightIndex + 7; // Skip "Weight:"
+            int end = description.indexOf(" kg", start);
+            if (end != -1) {
+                try {
+                    String weightStr = description.substring(start, end).trim();
+                    // Validate it's a number
+                    Double.parseDouble(weightStr);
+                    return weightStr;
+                } catch (Exception e) {
+                    return "N/A";
+                }
+            }
+        }
+        return "N/A";
+    }
+    
+    /**
+     * Helper method to remove weight prefix from description.
+     * @param description The description string
+     * @return Description without weight prefix
+     */
+    private String removeWeightFromDescription(String description) {
+        if (description == null || description.isEmpty()) {
+            return description;
+        }
+        // Remove "Weight: X.XX kg | " prefix if present
+        int weightIndex = description.indexOf("Weight:");
+        if (weightIndex != -1) {
+            int pipeIndex = description.indexOf("|", weightIndex);
+            if (pipeIndex != -1 && pipeIndex + 1 < description.length()) {
+                return description.substring(pipeIndex + 1).trim();
+            }
+        }
+        return description;
+    }
+    
+    private void refreshCaptainRequestsTable(DefaultTableModel tableModel) {
+        try {
+            tableModel.setRowCount(0);
+            for (Object[] row : RequestService.getBarangayRequests(barangay)) {
+                // Row format: {id, timestamp, requester, barangay, type, location, description, numSacks, wasteType, status}
+                // Need to add weight column: {id, timestamp, requester, barangay, type, location, description, numSacks, weight, wasteType, status}
+                String description = (String) row[6];
+                String weight = extractWeightFromDescription(description);
+                String cleanDescription = removeWeightFromDescription(description);
+                
+                Object[] newRow = new Object[]{
+                    row[0],  // id
+                    row[1],  // timestamp
+                    row[2],  // requester
+                    row[3],  // barangay
+                    row[4],  // type
+                    row[5],  // location
+                    cleanDescription,  // description (without weight prefix)
+                    row[7],  // numSacks
+                    weight,  // weight (extracted)
+                    row[8],  // wasteType
+                    row[9]   // status
+                };
+                tableModel.addRow(newRow);
+            }
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(null, 
+                "Error refreshing requests: " + e.getMessage(), 
+                "Refresh Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    private JPanel createCityOfficerRequestsPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JLabel title = new JLabel("View Requests for City Officer");
+        title.setFont(new Font("Arial", Font.BOLD, 24));
+        panel.add(title, BorderLayout.NORTH);
+        
+        String[] columns = {"ID", "Date/Time", "Requester", "Barangay", "Type", "Location", "Description", "Sacks", "Weight (kg)", "Waste Type", "Status"};
+        DefaultTableModel tableModel = new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        
+        JTable table = new JTable(tableModel);
+        table.setRowHeight(25);
+        table.getTableHeader().setBackground(UIConstants.PRIMARY_GREEN);
+        table.getTableHeader().setForeground(Color.BLACK);
+        table.setSelectionBackground(UIConstants.ACCENT_GREEN);
+        table.setSelectionForeground(Color.WHITE);
+        
+        refreshCityOfficerRequestsTable(tableModel);
+        
+        JPanel topPanel = new JPanel(new BorderLayout());
+        JPanel tableControl = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        
+        JButton approveBtn = new JButton("✅ Approve");
+        approveBtn.setBackground(new Color(34, 139, 34));
+        approveBtn.setForeground(Color.WHITE);
+        approveBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                int requestId = (Integer) tableModel.getValueAt(row, 0);
+                String timestamp = (String) tableModel.getValueAt(row, 1);
+                
+                List<Object[]> allRequests = RequestService.getCityOfficerRequests();
+                Object[] requestData = null;
+                for (Object[] req : allRequests) {
+                    if ((Integer) req[0] == requestId && req[1].equals(timestamp)) {
+                        requestData = req;
+                        break;
+                    }
+                }
+                
+                if (requestData != null) {
+                    boolean success = RequestService.updateCityOfficerRequestStatus(requestId, timestamp, "Approved by City Officer");
+                    if (success) {
+                        boolean forwarded = RequestService.forwardToGarbageCollector(requestData);
+                        if (forwarded) {
+                            refreshCityOfficerRequestsTable(tableModel);
+                            JOptionPane.showMessageDialog(panel,
+                                "Request approved and forwarded to Garbage Collector!",
+                                "Success", JOptionPane.INFORMATION_MESSAGE);
+                        } else {
+                            refreshCityOfficerRequestsTable(tableModel);
+                            JOptionPane.showMessageDialog(panel,
+                                "Request approved but error forwarding to Garbage Collector.",
+                                "Warning", JOptionPane.WARNING_MESSAGE);
+                        }
+                    } else {
+                        JOptionPane.showMessageDialog(panel, 
+                            "Error updating request status. Please try again.", 
+                            "Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                } else {
+                    JOptionPane.showMessageDialog(panel, 
+                        "Request not found. Please refresh and try again.", 
+                        "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            } else {
+                JOptionPane.showMessageDialog(panel, "Please select a request to approve.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+        
+        JButton rejectBtn = new JButton("❌ Reject");
+        rejectBtn.setBackground(new Color(200, 70, 70));
+        rejectBtn.setForeground(Color.WHITE);
+        rejectBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                int requestId = (Integer) tableModel.getValueAt(row, 0);
+                String timestamp = (String) tableModel.getValueAt(row, 1);
+                boolean success = RequestService.updateCityOfficerRequestStatus(requestId, timestamp, "Rejected by City Officer");
+                if (success) {
+                    refreshCityOfficerRequestsTable(tableModel);
+                    JOptionPane.showMessageDialog(panel, "Request rejected.", "Success", JOptionPane.INFORMATION_MESSAGE);
+                } else {
+                    JOptionPane.showMessageDialog(panel, 
+                        "Error rejecting request. Please try again.", 
+                        "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            } else {
+                JOptionPane.showMessageDialog(panel, "Please select a request to reject.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+        
+        JButton completeBtn = new JButton("✓ Complete");
+        completeBtn.setBackground(new Color(70, 130, 180));
+        completeBtn.setForeground(Color.WHITE);
+        completeBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                int requestId = (Integer) tableModel.getValueAt(row, 0);
+                String timestamp = (String) tableModel.getValueAt(row, 1);
+                boolean success = RequestService.updateCityOfficerRequestStatus(requestId, timestamp, "Completed");
+                if (success) {
+                    refreshCityOfficerRequestsTable(tableModel);
+                    JOptionPane.showMessageDialog(panel, "Request marked as completed!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                } else {
+                    JOptionPane.showMessageDialog(panel, 
+                        "Error completing request. Please try again.", 
+                        "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            } else {
+                JOptionPane.showMessageDialog(panel, "Please select a request to complete.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+        
+        JButton refreshBtn = new JButton("🔄 Refresh");
+        refreshBtn.setBackground(UIConstants.ACCENT_GREEN);
+        refreshBtn.setForeground(Color.WHITE);
+        refreshBtn.addActionListener(e -> refreshCityOfficerRequestsTable(tableModel));
+        
+        tableControl.add(approveBtn);
+        tableControl.add(rejectBtn);
+        tableControl.add(completeBtn);
+        tableControl.add(refreshBtn);
+        
+        topPanel.add(tableControl, BorderLayout.SOUTH);
+        panel.add(topPanel, BorderLayout.NORTH);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        
+        return panel;
+    }
+    
+    private void refreshCityOfficerRequestsTable(DefaultTableModel tableModel) {
+        try {
+            tableModel.setRowCount(0);
+            for (Object[] row : RequestService.getCityOfficerRequests()) {
+                // Row format: {id, timestamp, requester, barangay, type, location, description, numSacks, wasteType, status}
+                // Need to add weight column: {id, timestamp, requester, barangay, type, location, description, numSacks, weight, wasteType, status}
+                String description = (String) row[6];
+                String weight = extractWeightFromDescription(description);
+                String cleanDescription = removeWeightFromDescription(description);
+                
+                Object[] newRow = new Object[]{
+                    row[0],  // id
+                    row[1],  // timestamp
+                    row[2],  // requester
+                    row[3],  // barangay
+                    row[4],  // type
+                    row[5],  // location
+                    cleanDescription,  // description (without weight prefix)
+                    row[7],  // numSacks
+                    weight,  // weight (extracted)
+                    row[8],  // wasteType
+                    row[9]   // status
+                };
+                tableModel.addRow(newRow);
+            }
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(null, 
+                "Error refreshing requests: " + e.getMessage(), 
+                "Refresh Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    private JPanel createGarbageCollectorRequestsPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JLabel title = new JLabel("View Requests for Garbage Collector");
+        title.setFont(new Font("Arial", Font.BOLD, 24));
+        panel.add(title, BorderLayout.NORTH);
+        
+        String[] columns = {"ID", "Date/Time", "Requester", "Barangay", "Type", "Location", "Description", "Sacks", "Weight (kg)", "Waste Type", "Status"};
+        DefaultTableModel tableModel = new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        
+        JTable table = new JTable(tableModel);
+        table.setRowHeight(25);
+        table.getTableHeader().setBackground(UIConstants.PRIMARY_GREEN);
+        table.getTableHeader().setForeground(Color.BLACK);
+        table.setSelectionBackground(UIConstants.ACCENT_GREEN);
+        table.setSelectionForeground(Color.WHITE);
+        
+        refreshGarbageCollectorRequestsTable(tableModel);
+        
+        JPanel topPanel = new JPanel(new BorderLayout());
+        JPanel tableControl = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        
+        JButton completeBtn = new JButton("✓ Mark as Collected");
+        completeBtn.setBackground(new Color(34, 139, 34));
+        completeBtn.setForeground(Color.WHITE);
+        completeBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                int requestId = (Integer) tableModel.getValueAt(row, 0);
+                String timestamp = (String) tableModel.getValueAt(row, 1);
+                boolean success = RequestService.updateGarbageCollectorRequestStatus(requestId, timestamp, "Completed by Garbage Collector");
+                if (success) {
+                    refreshGarbageCollectorRequestsTable(tableModel);
+                    JOptionPane.showMessageDialog(panel, "Request marked as collected!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                } else {
+                    JOptionPane.showMessageDialog(panel, 
+                        "Error completing request. Please try again.", 
+                        "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            } else {
+                JOptionPane.showMessageDialog(panel, "Please select a request to complete.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+        
+        JButton refreshBtn = new JButton("🔄 Refresh");
+        refreshBtn.setBackground(UIConstants.ACCENT_GREEN);
+        refreshBtn.setForeground(Color.WHITE);
+        refreshBtn.addActionListener(e -> refreshGarbageCollectorRequestsTable(tableModel));
+        
+        tableControl.add(completeBtn);
+        tableControl.add(refreshBtn);
+        
+        topPanel.add(tableControl, BorderLayout.SOUTH);
+        panel.add(topPanel, BorderLayout.NORTH);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        
+        return panel;
+    }
+    
+    private void refreshGarbageCollectorRequestsTable(DefaultTableModel tableModel) {
+        try {
+            tableModel.setRowCount(0);
+            for (Object[] row : RequestService.getGarbageCollectorRequests()) {
+                // Only show pending requests (not completed ones)
+                // Completed requests should appear in "Manage Waste Records"
+                if (row.length >= 10 && row[9] != null && 
+                    !row[9].toString().equals("Completed by Garbage Collector")) {
+                    // Row format: {id, timestamp, requester, barangay, type, location, description, numSacks, wasteType, status}
+                    // Need to add weight column: {id, timestamp, requester, barangay, type, location, description, numSacks, weight, wasteType, status}
+                    String description = (String) row[6];
+                    String weight = extractWeightFromDescription(description);
+                    String cleanDescription = removeWeightFromDescription(description);
+                    
+                    Object[] newRow = new Object[]{
+                        row[0],  // id
+                        row[1],  // timestamp
+                        row[2],  // requester
+                        row[3],  // barangay
+                        row[4],  // type
+                        row[5],  // location
+                        cleanDescription,  // description (without weight prefix)
+                        row[7],  // numSacks
+                        weight,  // weight (extracted)
+                        row[8],  // wasteType
+                        row[9]   // status
+                    };
+                    tableModel.addRow(newRow);
+                }
+            }
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(null, 
+                "Error refreshing requests: " + e.getMessage(), 
+                "Refresh Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    // ========== ADMIN-ONLY PANELS ==========
+    
+    /**
+     * Panel for Admin to view all registered users across all roles.
+     */
+    private JPanel createAllUsersPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JLabel title = new JLabel("All Registered Users");
+        title.setFont(new Font("Arial", Font.BOLD, 24));
+        panel.add(title, BorderLayout.NORTH);
+        
+        String[] columns = {"Username", "Role", "Barangay"};
+        DefaultTableModel tableModel = new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false; // Read-only
+            }
+        };
+        
+        JTable table = new JTable(tableModel);
+        table.setRowHeight(25);
+        table.getTableHeader().setBackground(UIConstants.PRIMARY_GREEN);
+        table.getTableHeader().setForeground(Color.BLACK);
+        table.setSelectionBackground(UIConstants.ACCENT_GREEN);
+        table.setSelectionForeground(Color.WHITE);
+        
+        // Load all users from all role files
+        refreshAllUsersTable(tableModel);
+        
+        JPanel topPanel = new JPanel(new BorderLayout());
+        JPanel tableControl = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        
+        JButton deleteBtn = new JButton("🗑️ Delete User");
+        deleteBtn.setBackground(new Color(200, 70, 70));
+        deleteBtn.setForeground(Color.WHITE);
+        deleteBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                String username = (String) tableModel.getValueAt(row, 0);
+                String userRole = (String) tableModel.getValueAt(row, 1);
+                
+                // Prevent deleting Admin users
+                if ("Admin".equals(userRole)) {
+                    JOptionPane.showMessageDialog(panel, 
+                        "Cannot delete Admin users!", 
+                        "Delete Restricted", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                
+                int confirm = JOptionPane.showConfirmDialog(panel, 
+                    "Are you sure you want to delete user: " + username + " (" + userRole + ")?\n" +
+                    "This action cannot be undone!", 
+                    "Confirm Delete", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+                
+                if (confirm == JOptionPane.YES_OPTION) {
+                    boolean success = UserAuthenticationService.deleteUserFromDB(username);
+                    if (success) {
+                        refreshAllUsersTable(tableModel);
+                        JOptionPane.showMessageDialog(panel, 
+                            "User " + username + " has been deleted successfully!", 
+                            "Delete Successful", JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(panel, 
+                            "Error deleting user. User may not exist in the system.", 
+                            "Delete Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            } else {
+                JOptionPane.showMessageDialog(panel, 
+                    "Please select a user to delete.", 
+                    "No Selection", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+        
+        JButton refreshBtn = new JButton("🔄 Refresh");
+        refreshBtn.setBackground(UIConstants.ACCENT_GREEN);
+        refreshBtn.setForeground(Color.WHITE);
+        refreshBtn.addActionListener(e -> refreshAllUsersTable(tableModel));
+        
+        JTextField searchField = new JTextField(15);
+        JButton searchBtn = new JButton("🔍 Search");
+        searchBtn.addActionListener(e -> {
+            String query = searchField.getText().trim().toLowerCase();
+            tableModel.setRowCount(0);
+            for (Object[] row : getAllUsersFromAllRoles()) {
+                for (Object cell : row) {
+                    if (cell.toString().toLowerCase().contains(query)) {
+                        tableModel.addRow(row);
+                        break;
+                    }
+                }
+            }
+        });
+        
+        tableControl.add(deleteBtn);
+        tableControl.add(refreshBtn);
+        tableControl.add(new JLabel("  Search:"));
+        tableControl.add(searchField);
+        tableControl.add(searchBtn);
+        
+        topPanel.add(title, BorderLayout.NORTH);
+        topPanel.add(tableControl, BorderLayout.SOUTH);
+        panel.add(topPanel, BorderLayout.NORTH);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        
+        return panel;
+    }
+    
+    /**
+     * Panel for Admin to view all waste records from all roles.
+     */
+    private JPanel createAllWasteRecordsPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JLabel title = new JLabel("All Waste Records (All Roles)");
+        title.setFont(new Font("Arial", Font.BOLD, 24));
+        panel.add(title, BorderLayout.NORTH);
+        
+        String[] columns = {"ID", "Date", "Location", "Weight (kg)", "Type", "Role"};
+        DefaultTableModel tableModel = new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false; // Read-only
+            }
+        };
+        
+        JTable table = new JTable(tableModel);
+        table.setRowHeight(25);
+        table.getTableHeader().setBackground(UIConstants.PRIMARY_GREEN);
+        table.getTableHeader().setForeground(Color.BLACK);
+        table.setSelectionBackground(UIConstants.ACCENT_GREEN);
+        table.setSelectionForeground(Color.WHITE);
+        
+        // Load all waste records from all roles
+        refreshAllWasteRecordsTable(tableModel);
+        
+        JPanel topPanel = new JPanel(new BorderLayout());
+        JPanel tableControl = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        
+        JButton refreshBtn = new JButton("🔄 Refresh");
+        refreshBtn.setBackground(UIConstants.ACCENT_GREEN);
+        refreshBtn.setForeground(Color.WHITE);
+        refreshBtn.addActionListener(e -> refreshAllWasteRecordsTable(tableModel));
+        
+        JButton exportCsvBtn = new JButton("⬇️ Export to CSV");
+        exportCsvBtn.setBackground(UIConstants.ACCENT_GREEN);
+        exportCsvBtn.setForeground(Color.WHITE);
+        exportCsvBtn.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setSelectedFile(new java.io.File("all_waste_records.csv"));
+            if (chooser.showSaveDialog(panel) == JFileChooser.APPROVE_OPTION) {
+                try (FileWriter writer = new FileWriter(chooser.getSelectedFile())) {
+                    writer.write("ID,Date,Location,Weight(kg),Type,Role\n");
+                    for (int i = 0; i < tableModel.getRowCount(); i++) {
+                        for (int j = 0; j < tableModel.getColumnCount(); j++) {
+                            writer.write(tableModel.getValueAt(i, j).toString());
+                            if (j < tableModel.getColumnCount() - 1) writer.write(",");
+                        }
+                        writer.write("\n");
+                    }
+                    JOptionPane.showMessageDialog(panel, "CSV exported successfully!", "Export Complete", JOptionPane.INFORMATION_MESSAGE);
+                } catch (IOException ex) {
+                    JOptionPane.showMessageDialog(panel, "Error exporting: " + ex.getMessage(), "Export Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+        
+        JButton exportTxtBtn = new JButton("📄 Export to Text");
+        exportTxtBtn.setBackground(new Color(70, 130, 180));
+        exportTxtBtn.setForeground(Color.WHITE);
+        exportTxtBtn.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setSelectedFile(new java.io.File("all_waste_records.txt"));
+            if (chooser.showSaveDialog(panel) == JFileChooser.APPROVE_OPTION) {
+                exportTableToTextFile(chooser.getSelectedFile(), tableModel, panel);
+            }
+        });
+        
+        JButton importCsvBtn = new JButton("⬆️ Import from CSV");
+        importCsvBtn.setBackground(new Color(255, 140, 0));
+        importCsvBtn.setForeground(Color.WHITE);
+        importCsvBtn.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("CSV Files", "csv"));
+            if (chooser.showOpenDialog(panel) == JFileChooser.APPROVE_OPTION) {
+                importFromCSV(chooser.getSelectedFile(), panel);
+                refreshAllWasteRecordsTable(tableModel);
+            }
+        });
+        
+        tableControl.add(refreshBtn);
+        tableControl.add(exportCsvBtn);
+        tableControl.add(exportTxtBtn);
+        tableControl.add(importCsvBtn);
+        
+        topPanel.add(title, BorderLayout.NORTH);
+        topPanel.add(tableControl, BorderLayout.SOUTH);
+        panel.add(topPanel, BorderLayout.NORTH);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        
+        return panel;
+    }
+    
+    /**
+     * Panel for Admin to view system statistics and overview.
+     */
+    private JPanel createSystemStatsPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        JLabel title = new JLabel("System Statistics & Overview");
+        title.setFont(new Font("Arial", Font.BOLD, 24));
+        panel.add(title, BorderLayout.NORTH);
+        
+        JTextArea statsArea = new JTextArea();
+        statsArea.setEditable(false);
+        statsArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
+        
+        JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        
+        JButton generateBtn = new JButton("📊 Generate Statistics");
+        generateBtn.setBackground(UIConstants.PRIMARY_GREEN);
+        generateBtn.setForeground(Color.WHITE);
+        generateBtn.addActionListener(e -> {
+            StringBuilder sb = new StringBuilder();
+            sb.append("========================================\n");
+            sb.append("   GREENVAULT SYSTEM STATISTICS\n");
+            sb.append("   Generated: ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())).append("\n");
+            sb.append("========================================\n\n");
+            
+            // User Statistics
+            List<Object[]> allUsers = getAllUsersFromAllRoles();
+            Map<String, Integer> usersByRole = new HashMap<>();
+            for (Object[] user : allUsers) {
+                String userRole = (String) user[1];
+                usersByRole.put(userRole, usersByRole.getOrDefault(userRole, 0) + 1);
+            }
+            
+            sb.append("USER STATISTICS:\n");
+            sb.append("Total Users: ").append(allUsers.size()).append("\n");
+            sb.append("Users by Role:\n");
+            for (Map.Entry<String, Integer> entry : usersByRole.entrySet()) {
+                sb.append("  - ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
+            }
+            sb.append("\n");
+            
+            // Waste Records Statistics
+            String[] roles = {"Garbage Collector", "Barangay Member"};
+            double totalWeight = 0;
+            int totalRecords = 0;
+            Map<String, Double> weightByType = new HashMap<>();
+            Map<String, Integer> recordsByRole = new HashMap<>();
+            
+            for (String r : roles) {
+                List<Object[]> records = WasteDataService.getAllRecords(r);
+                recordsByRole.put(r, records.size());
+                totalRecords += records.size();
+                
+                for (Object[] record : records) {
+                    double weight = (double) record[3];
+                    String type = (String) record[4];
+                    totalWeight += weight;
+                    weightByType.put(type, weightByType.getOrDefault(type, 0.0) + weight);
+                }
+            }
+            
+            sb.append("WASTE RECORDS STATISTICS:\n");
+            sb.append("Total Records: ").append(totalRecords).append("\n");
+            sb.append("Total Weight: ").append(String.format("%.2f", totalWeight)).append(" kg\n");
+            sb.append("Records by Role:\n");
+            for (Map.Entry<String, Integer> entry : recordsByRole.entrySet()) {
+                sb.append("  - ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
+            }
+            sb.append("\nWeight by Type:\n");
+            for (Map.Entry<String, Double> entry : weightByType.entrySet()) {
+                sb.append("  - ").append(entry.getKey()).append(": ").append(String.format("%.2f", entry.getValue())).append(" kg\n");
+            }
+            sb.append("\n");
+            
+            // Pending Registrations
+            List<Object[]> pending = UserApprovalService.getPendingRegistrations();
+            sb.append("PENDING REGISTRATIONS: ").append(pending.size()).append("\n");
+            
+            statsArea.setText(sb.toString());
+        });
+        
+        controls.add(generateBtn);
+        panel.add(controls, BorderLayout.SOUTH);
+        panel.add(new JScrollPane(statsArea), BorderLayout.CENTER);
+        
+        return panel;
+    }
+    
+    /**
+     * Helper method to get all users from database.
+     * Now reads from database instead of text files for consistency.
+     */
+    private List<Object[]> getAllUsersFromAllRoles() {
+        List<Object[]> allUsers = new ArrayList<>();
+        
+        try {
+            // Get all users from database
+            List<Object[]> dbUsers = UserDAO.getAllUsers();
+            
+            // Format: {username, password, role, barangay} from database
+            // Table needs: {username, role, barangay}
+            for (Object[] dbUser : dbUsers) {
+                String username = (String) dbUser[0];
+                String role = (String) dbUser[2];
+                String barangay = dbUser[3] != null ? (String) dbUser[3] : "N/A";
+                
+                // Add to list without password
+                allUsers.add(new Object[]{username, role, barangay});
+            }
+        } catch (SQLException e) {
+            System.err.println("Error reading users from database: " + e.getMessage());
+            e.printStackTrace();
+            // Fallback: try reading from files if database fails
+            return getAllUsersFromFilesFallback();
+        }
+        
+        return allUsers;
+    }
+    
+    /**
+     * Fallback method to read users from files if database fails.
+     */
+    private List<Object[]> getAllUsersFromFilesFallback() {
+        List<Object[]> allUsers = new ArrayList<>();
+        String[] roles = {"Admin", "Barangay Captain", "City Officer", 
+                         "Garbage Collector", "Barangay Member"};
+        
+        for (String role : roles) {
+            String filePath = RoleDataFileService.getDataFilePath(role);
+            File file = new File(filePath);
+            
+            if (!file.exists()) continue;
+            
+            try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+                String line;
+                boolean inUserSection = false;
+                
+                while ((line = reader.readLine()) != null) {
+                    if (line.trim().isEmpty()) continue;
+                    
+                    if (line.startsWith("# User Accounts") || line.startsWith("# Users")) {
+                        inUserSection = true;
+                        continue;
+                    }
+                    
+                    if (line.startsWith("# Waste Records")) {
+                        break;
+                    }
+                    
+                    if (line.startsWith("#") && !inUserSection) {
+                        continue;
+                    }
+                    
+                    String[] parts = line.split("\\|");
+                    if ((parts.length == 4 || parts.length == 5) && inUserSection) {
+                        try {
+                            String username = parts[0].trim();
+                            String fileRole = parts[2].trim();
+                            String barangay = parts.length >= 4 ? parts[3].trim() : "N/A";
+                            
+                            if (fileRole.equals(role)) {
+                                allUsers.add(new Object[]{username, fileRole, barangay});
+                            }
+                        } catch (Exception e) {
+                            // Skip invalid lines
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                System.err.println("Error reading file: " + filePath);
+            }
+        }
+        
+        return allUsers;
+    }
+    
+    /**
+     * Helper method to refresh all users table.
+     */
+    private void refreshAllUsersTable(DefaultTableModel tableModel) {
+        try {
+            tableModel.setRowCount(0);
+            for (Object[] user : getAllUsersFromAllRoles()) {
+                tableModel.addRow(user);
+            }
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(null, 
+                "Error refreshing users: " + e.getMessage(), 
+                "Refresh Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    /**
+     * Helper method to refresh all waste records table.
+     */
+    private void refreshAllWasteRecordsTable(DefaultTableModel tableModel) {
+        try {
+            tableModel.setRowCount(0);
+            String[] roles = {"Garbage Collector", "Barangay Member"};
+            
+            for (String r : roles) {
+                WasteDataService.clearCache(r);
+                List<Object[]> records = WasteDataService.getAllRecords(r);
+                for (Object[] record : records) {
+                    // Add role column: {id, date, location, weight, type, role}
+                    tableModel.addRow(new Object[]{
+                        record[0], record[1], record[2], record[3], record[4], r
+                    });
+                }
+            }
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(null, 
+                "Error refreshing waste records: " + e.getMessage(), 
+                "Refresh Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    /**
+     * Helper method to get barangay from location.
+     * @param location The location/area
+     * @return The barangay name, or "N/A" if not found
+     */
+    private String getBarangayFromLocation(String location) {
+        if (location == null) {
+            return "N/A";
+        }
+        
+        // Get all barangays and check which one contains this location
+        Map<String, String[]> allBarangays = BarangayAreaMapper.getAllBarangayAreas();
+        for (Map.Entry<String, String[]> entry : allBarangays.entrySet()) {
+            String barangayName = entry.getKey();
+            if (barangayName.equals("Select Barangay")) continue;
+            
+            // Check if location matches barangay name directly
+            if (location.equalsIgnoreCase(barangayName)) {
+                return barangayName;
+            }
+            
+            // Check if location is one of the areas in this barangay
+            String[] areas = entry.getValue();
+            for (String area : areas) {
+                if (area.equalsIgnoreCase(location)) {
+                    return barangayName;
+                }
+            }
+        }
+        
+        return "N/A";
+    }
+    
+    /**
+     * Loads all waste records from all roles (except Barangay Member) into the table model.
+     * For Barangay Captain: filters by barangay (only shows records from their barangay).
+     * For other roles: shows all records.
+     * @param tableModel The table model to populate
+     */
+    private void loadAllWasteRecords(DefaultTableModel tableModel) {
+        List<Object[]> allRecords = new ArrayList<>();
+        loadAllWasteRecordsToList(allRecords);
+        
+        // Filter by barangay only if user is Barangay Captain
+        if (role.equals("Barangay Captain")) {
+            String userBarangay = (barangay != null) ? barangay.trim() : "";
+            for (Object[] record : allRecords) {
+                String recordBarangay = (String) record[2]; // Barangay is at index 2
+                String recordLocation = (String) record[3]; // Location is at index 3
+                
+                // Case-insensitive comparison with trimmed values
+                boolean matches = recordBarangay != null && 
+                                 recordBarangay.trim().equalsIgnoreCase(userBarangay);
+                
+                // If barangay is "N/A" or empty, try to match by location
+                if (!matches && (recordBarangay == null || recordBarangay.trim().isEmpty() || 
+                    recordBarangay.trim().equalsIgnoreCase("N/A"))) {
+                    if (recordLocation != null) {
+                        String barangayFromLocation = getBarangayFromLocation(recordLocation);
+                        matches = barangayFromLocation.trim().equalsIgnoreCase(userBarangay);
+                    }
+                }
+                
+                if (matches) {
+                    tableModel.addRow(record);
+                }
+            }
+        } else {
+            // For other roles, show all records
+            for (Object[] record : allRecords) {
+                tableModel.addRow(record);
+            }
+        }
+    }
+    
+    /**
+     * Loads all waste records from all roles (except Barangay Member) into a list.
+     * @param recordsList The list to populate with records {id, date, barangay, location, weight, type, role}
+     */
+    private void loadAllWasteRecordsToList(List<Object[]> recordsList) {
+        // Load from managewasterecord.txt (Garbage Collector completed collections)
+        // Format: {id, date, location, weight, type, barangay}
+        for (Object[] record : RequestService.getManageWasteRecords()) {
+            String barangay = (record.length >= 6 && record[5] != null) ? (String) record[5] : "N/A";
+            recordsList.add(new Object[]{
+                record[0], record[1], barangay, record[2], record[3], record[4], "Garbage Collector"
+            });
+        }
+        
+        // Load from all role files except Barangay Member and Garbage Collector
+        // (Garbage Collector records are already loaded from managewasterecord.txt above)
+        String[] roles = {"Admin", "Barangay Captain", "City Officer"};
+        for (String r : roles) {
+            if (!r.equals("Barangay Member") && !r.equals("Garbage Collector")) {
+                WasteDataService.clearCache(r);
+                List<Object[]> roleRecords = WasteDataService.getAllRecords(r);
+                for (Object[] record : roleRecords) {
+                    // Determine barangay from location
+                    String location = (String) record[2];
+                    String barangay = getBarangayFromLocation(location);
+                    recordsList.add(new Object[]{
+                        record[0], record[1], barangay, record[2], record[3], record[4], r
+                    });
+                }
+            }
+        }
+    }
+    
+    /**
+     * Exports waste records to a text file (one object per line).
+     * Format: ID|Date|Barangay|Location|Weight(kg)|Type|Role
+     * @param file The file to write to
+     * @param panel The panel for showing messages
+     * @param userRole The current user's role
+     * @param userBarangay The current user's barangay
+     */
+    private void exportToTextFile(File file, JPanel panel, String userRole, String userBarangay) {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
+            // Write header comment
+            writer.write("# Waste Records Export");
+            writer.newLine();
+            writer.write("# Format: ID|Date|Barangay|Location|Weight(kg)|Type|Role");
+            writer.newLine();
+            writer.write("# Generated: " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+            writer.newLine();
+            writer.newLine();
+            
+            // Load all records
+            List<Object[]> allRecords = new ArrayList<>();
+            loadAllWasteRecordsToList(allRecords);
+            
+            int count = 0;
+            for (Object[] row : allRecords) {
+                // Filter by barangay only if user is Barangay Captain
+                if (userRole.equals("Barangay Captain")) {
+                    String recordBarangay = (String) row[2];
+                    if (recordBarangay == null || !recordBarangay.equals(userBarangay)) {
+                        continue;
+                    }
+                }
+                
+                // Format: {id, date, barangay, location, weight, type, role}
+                // Write as: ID|Date|Barangay|Location|Weight|Type|Role
+                writer.write(row[0] + "|" + row[1] + "|" + row[2] + "|" + row[3] + "|" + 
+                            row[4] + "|" + row[5] + "|" + (row.length > 6 ? row[6] : "N/A"));
+                writer.newLine();
+                count++;
+            }
+            
+            String message = userRole.equals("Barangay Captain")
+                ? "Text file exported successfully! Total records from " + userBarangay + ": " + count
+                : "Text file exported successfully! Total records: " + count;
+            JOptionPane.showMessageDialog(panel, message, "Export Complete", JOptionPane.INFORMATION_MESSAGE);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(panel, "Error exporting to text file: " + ex.getMessage(), 
+                "Export Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    /**
+     * Exports table data to a text file (one object per line).
+     * @param file The file to write to
+     * @param tableModel The table model containing data
+     * @param panel The panel for showing messages
+     */
+    private void exportTableToTextFile(File file, DefaultTableModel tableModel, JPanel panel) {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
+            // Write header comment
+            writer.write("# Waste Records Export");
+            writer.newLine();
+            writer.write("# Format: " + String.join("|", getColumnNames(tableModel)));
+            writer.newLine();
+            writer.write("# Generated: " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+            writer.newLine();
+            writer.newLine();
+            
+            int count = 0;
+            for (int i = 0; i < tableModel.getRowCount(); i++) {
+                StringBuilder line = new StringBuilder();
+                for (int j = 0; j < tableModel.getColumnCount(); j++) {
+                    if (j > 0) line.append("|");
+                    Object value = tableModel.getValueAt(i, j);
+                    line.append(value != null ? value.toString() : "");
+                }
+                writer.write(line.toString());
+                writer.newLine();
+                count++;
+            }
+            
+            JOptionPane.showMessageDialog(panel, 
+                "Text file exported successfully! Total records: " + count, 
+                "Export Complete", JOptionPane.INFORMATION_MESSAGE);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(panel, "Error exporting to text file: " + ex.getMessage(), 
+                "Export Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    /**
+     * Gets column names from table model.
+     * @param tableModel The table model
+     * @return Array of column names
+     */
+    private String[] getColumnNames(DefaultTableModel tableModel) {
+        int colCount = tableModel.getColumnCount();
+        String[] names = new String[colCount];
+        for (int i = 0; i < colCount; i++) {
+            names[i] = tableModel.getColumnName(i);
+        }
+        return names;
+    }
+    
+    /**
+     * Imports waste records from a CSV file and adds them to the database.
+     * Expected CSV format: ID,Date,Barangay,Location,Weight(kg),Type,Role
+     * Note: ID will be auto-generated, so it's ignored from CSV
+     * @param file The CSV file to import
+     * @param panel The panel for showing messages
+     */
+    private void importFromCSV(File file, JPanel panel) {
+        int successCount = 0;
+        int errorCount = 0;
+        int skippedCount = 0;
+        StringBuilder errors = new StringBuilder();
+        
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line = reader.readLine(); // Read header line
+            if (line == null || !line.contains("ID") || !line.contains("Date")) {
+                JOptionPane.showMessageDialog(panel, 
+                    "Invalid CSV format. Expected header: ID,Date,Barangay,Location,Weight(kg),Type,Role", 
+                    "Import Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            
+            int lineNumber = 1;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) {
+                    continue; // Skip empty lines and comments
+                }
+                
+                try {
+                    String[] parts = line.split(",");
+                    if (parts.length < 6) {
+                        errorCount++;
+                        errors.append("Line ").append(lineNumber).append(": Not enough columns\n");
+                        continue;
+                    }
+                    
+                    // Parse CSV: ID,Date,Barangay,Location,Weight(kg),Type,Role
+                    // Note: We ignore ID (index 0) as database auto-generates it
+                    String date = parts[1].trim();
+                    String barangay = parts.length > 2 ? parts[2].trim() : "N/A";
+                    String location = parts.length > 3 ? parts[3].trim() : barangay;
+                    String weightStr = parts.length > 4 ? parts[4].trim() : "0";
+                    String type = parts.length > 5 ? parts[5].trim() : "N/A";
+                    String recordRole = parts.length > 6 ? parts[6].trim() : "Admin";
+                    
+                    // Validate and parse weight
+                    double weight;
+                    try {
+                        weight = Double.parseDouble(weightStr);
+                        if (weight <= 0) {
+                            errorCount++;
+                            errors.append("Line ").append(lineNumber).append(": Invalid weight\n");
+                            continue;
+                        }
+                    } catch (NumberFormatException e) {
+                        errorCount++;
+                        errors.append("Line ").append(lineNumber).append(": Invalid weight format\n");
+                        continue;
+                    }
+                    
+                    // Validate date format (basic check)
+                    if (date.isEmpty() || !date.matches("\\d{4}-\\d{2}-\\d{2}")) {
+                        errorCount++;
+                        errors.append("Line ").append(lineNumber).append(": Invalid date format (expected YYYY-MM-DD)\n");
+                        continue;
+                    }
+                    
+                    // Validate role
+                    String[] validRoles = {"Admin", "Barangay Captain", "City Officer", 
+                                         "Garbage Collector", "Barangay Member"};
+                    boolean validRole = false;
+                    for (String validRoleStr : validRoles) {
+                        if (validRoleStr.equals(recordRole)) {
+                            validRole = true;
+                            break;
+                        }
+                    }
+                    if (!validRole) {
+                        skippedCount++;
+                        continue; // Skip invalid roles
+                    }
+                    
+                    // Insert into database
+                    try {
+                        int id = WasteRecordDAO.createWasteRecord(recordRole, date, location, weight, type);
+                        if (id > 0) {
+                            successCount++;
+                            // Clear cache for the role
+                            WasteDataService.clearCache(recordRole);
+                        } else {
+                            errorCount++;
+                            errors.append("Line ").append(lineNumber).append(": Failed to insert\n");
+                        }
+                    } catch (SQLException e) {
+                        errorCount++;
+                        errors.append("Line ").append(lineNumber).append(": ").append(e.getMessage()).append("\n");
+                    }
+                    
+                } catch (Exception e) {
+                    errorCount++;
+                    errors.append("Line ").append(lineNumber).append(": ").append(e.getMessage()).append("\n");
+                }
+            }
+            
+            // Show results
+            StringBuilder message = new StringBuilder();
+            message.append("Import Complete!\n\n");
+            message.append("Successfully imported: ").append(successCount).append(" records\n");
+            if (skippedCount > 0) {
+                message.append("Skipped: ").append(skippedCount).append(" records\n");
+            }
+            if (errorCount > 0) {
+                message.append("Errors: ").append(errorCount).append(" records\n");
+            }
+            
+            if (errorCount > 0 && errors.length() > 0) {
+                message.append("\nError details:\n");
+                String errorDetails = errors.toString();
+                if (errorDetails.length() > 500) {
+                    message.append(errorDetails.substring(0, 500)).append("... (truncated)");
+                } else {
+                    message.append(errorDetails);
+                }
+            }
+            
+            JOptionPane.showMessageDialog(panel, message.toString(), 
+                "Import Results", 
+                errorCount > 0 ? JOptionPane.WARNING_MESSAGE : JOptionPane.INFORMATION_MESSAGE);
+                
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(panel, 
+                "Error reading CSV file: " + ex.getMessage(), 
+                "Import Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+}

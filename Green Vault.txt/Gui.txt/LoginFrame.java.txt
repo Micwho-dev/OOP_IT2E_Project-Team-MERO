@@ -1,0 +1,82 @@
+package gui;
+
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import java.awt.*;
+import services.UserAuthenticationService;
+
+/**
+ * Login frame for user authentication.
+ */
+public class LoginFrame extends JFrame {
+    private JTextField userField;
+    private JPasswordField passField;
+
+    public LoginFrame() {
+        setTitle("GreenVault - Login");
+        setSize(400, 350); 
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLocationRelativeTo(null);
+        setLayout(new BorderLayout());
+        getContentPane().setBackground(UIConstants.BACKGROUND_GRAY);
+
+        JPanel headerPanel = new JPanel();
+        headerPanel.setBackground(UIConstants.ACCENT_GREEN);
+        JLabel titleLabel = new JLabel("GreenVault Access");
+        titleLabel.setForeground(Color.BLACK);
+        titleLabel.setFont(new Font("Arial", Font.BOLD, 22));
+        headerPanel.add(titleLabel);
+
+        JPanel formPanel = new JPanel(new GridLayout(3, 2, 10, 10));
+        formPanel.setBorder(new EmptyBorder(30, 30, 30, 30));
+        formPanel.setBackground(UIConstants.BACKGROUND_GRAY);
+        
+        formPanel.add(new JLabel("Username:"));
+        userField = new JTextField();
+        formPanel.add(userField);
+
+        formPanel.add(new JLabel("Password:"));
+        passField = new JPasswordField();
+        formPanel.add(passField);
+
+        JPanel btnPanel = new JPanel(new GridLayout(1, 2, 15, 0));
+        btnPanel.setBorder(new EmptyBorder(0, 30, 20, 30));
+        btnPanel.setBackground(UIConstants.BACKGROUND_GRAY);
+
+        JButton loginBtn = new JButton("Login");
+        loginBtn.setBackground(UIConstants.PRIMARY_GREEN);
+        loginBtn.setForeground(Color.BLACK);
+
+        JButton registerBtn = new JButton("Sign Up");
+        registerBtn.setBackground(new Color(150, 150, 150)); 
+        registerBtn.setForeground(Color.BLACK);
+
+        btnPanel.add(registerBtn);
+        btnPanel.add(loginBtn);
+
+        loginBtn.addActionListener(e -> {
+            String user = userField.getText();
+            String pass = new String(passField.getPassword());
+            
+            String role = UserAuthenticationService.checkUserInDB(user, pass); 
+            
+            if (role != null) {
+                Object[] userInfo = UserAuthenticationService.getUserInfo(user);
+                String barangay = (String) userInfo[1];
+                new DashboardFrame(user, role, barangay).setVisible(true);
+                this.dispose();
+            } else {
+                JOptionPane.showMessageDialog(this, "Invalid Credentials", "Login Failed", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        registerBtn.addActionListener(e -> {
+            new RegisterFrame().setVisible(true);
+            this.dispose(); 
+        });
+
+        add(headerPanel, BorderLayout.NORTH);
+        add(formPanel, BorderLayout.CENTER);
+        add(btnPanel, BorderLayout.SOUTH);
+    }
+}
