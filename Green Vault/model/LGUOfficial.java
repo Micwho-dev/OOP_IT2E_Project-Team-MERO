@@ -1,0 +1,16 @@
+package models;
+
+/**
+ * Represents an LGU (Local Government Unit) Official user.
+ */
+public class LGUOfficial extends AbstractUser {
+    public LGUOfficial(String username, String role, String barangay) { 
+        super(username, role, barangay); 
+    }
+    
+    @Override
+    public String getPermissionsSummary() {
+        return "Management, Audit, and City-Wide Reporting Access. Permissions depend on specific role.";
+    }
+}
+
