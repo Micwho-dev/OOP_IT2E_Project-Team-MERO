@@ -1,0 +1,18 @@
+package gui;
+
+import java.awt.Color;
+
+/**
+ * UI Constants for GreenVault Application
+ * Centralizes color and style constants for consistency across the application
+ */
+public class UIConstants {
+    // Prevent instantiation - utility class
+    private UIConstants() {}
+    
+    public static final Color PRIMARY_GREEN = new Color(0, 128, 0); 
+    public static final Color ACCENT_GREEN = new Color(34, 139, 34); 
+    public static final Color BACKGROUND_GRAY = new Color(245, 245, 245); 
+    public static final Color SIDEBAR_DARK = new Color(40, 40, 40);
+}
+
