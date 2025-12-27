@@ -1,0 +1,57 @@
+package utils;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Collections;
+
+/**
+ * Utility class for mapping barangays to their corresponding areas.
+ * Provides encapsulated access to area data with defensive copying.
+ */
+public class BarangayAreaMapper {
+    private static final Map<String, String[]> AREA_MAP = new HashMap<>(); // Made private for encapsulation
+    
+    static {
+        AREA_MAP.put("Select Barangay", new String[]{"Select Area"});
+        
+        AREA_MAP.put("Central", new String[]{"Select Area", "Madang", "Upper Madang", "Lower Madang", "Lemente","Balintong","Calagundian","Bilawan","Chan Village","Magsaysay","Tambiling","Don Louis","Donya Rosa","Magapo","Santo Nino","Sudlon"});
+        AREA_MAP.put("Dahican", new String[]{"Select Area", "NHA", "Dahican Centro", "MINZI", "NASA"});
+        AREA_MAP.put("Matiao", new String[]{"Select Area", "Purok Luyong", "Purok Centro (Matiao)", "Purok Liyang"});
+        AREA_MAP.put("Badas", new String[]{"Select Area", "Badas Proper", "Badas Coastal"});
+        
+        String[] allMatiBarangays = {
+            "Bobon", "Buso", "Cabuaya", "Culian", "Danao", 
+            "Dawan", "Don Enrique Lopez", "Don Martin Marundan", 
+            "Don Salvador Lopez, Sr.", "Langka", "Lawigan", "Libudon", 
+            "Luban", "Macambol", "Mamali", "Mayo", "Sainz", "Sanghay", 
+            "Tagabakid", "Tagbinonga", "Taguibo", "Tamisan"
+        };
+        
+        String[] genericAreas = {"Select Area", "Area 1", "Area 2", "Area 3", "Area 4"};
+        
+        for (String barangay : allMatiBarangays) {
+            if (!AREA_MAP.containsKey(barangay)) {
+                AREA_MAP.put(barangay, genericAreas);
+            }
+        }
+    }
+
+    /**
+     * Gets the areas for a specific barangay.
+     * Returns a defensive copy to prevent external modification.
+     */
+    public static String[] getAreas(String barangay) {
+        String[] areas = AREA_MAP.getOrDefault(barangay, new String[]{"Select Area"});
+        // Return a defensive copy to prevent external modification
+        return areas.clone();
+    }
+    
+    /**
+     * Gets all barangay-area mappings.
+     * Returns an unmodifiable view to prevent external modification.
+     */
+    public static Map<String, String[]> getAllBarangayAreas() {
+        // Return unmodifiable view to prevent external modification
+        return Collections.unmodifiableMap(AREA_MAP);
+    }
+}
