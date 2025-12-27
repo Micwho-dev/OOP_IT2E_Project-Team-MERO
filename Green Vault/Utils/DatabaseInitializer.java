@@ -1,0 +1,284 @@
+package utils;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+/**
+ * Utility class to initialize the H2 database with required tables.
+ */
+public class DatabaseInitializer {
+    
+    /**
+     * Initializes the database by creating all required tables if they don't exist.
+     */
+    public static void initializeDatabase() {
+        // Ensure database folder exists (using DatabaseConfig method)
+        DatabaseConfig.ensureDatabaseFolder();
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             Statement stmt = conn.createStatement()) {
+            
+            // Create users table
+            String createUsersTable = """
+                CREATE TABLE IF NOT EXISTS users (
+                    username VARCHAR(50) PRIMARY KEY,
+                    password VARCHAR(100) NOT NULL,
+                    role VARCHAR(50) NOT NULL,
+                    barangay VARCHAR(100),
+                    id VARCHAR(100)
+                )
+                """;
+            
+            // Execute table creation first
+            stmt.execute(createUsersTable);
+            System.out.println("✓ Created/verified 'users' table");
+            System.out.flush();
+            
+            // Add ID column to existing users table if it doesn't exist (migration)
+            // This handles the case where table was created before ID column was added
+            try {
+                // Check if ID column exists
+                java.sql.ResultSet rs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS " +
+                    "WHERE TABLE_SCHEMA = 'PUBLIC' " +
+                    "AND TABLE_NAME = 'USERS' " +
+                    "AND COLUMN_NAME = 'ID'"
+                );
+                boolean idColumnExists = false;
+                if (rs.next()) {
+                    idColumnExists = rs.getInt(1) > 0;
+                }
+                rs.close();
+                
+                // Add ID column if it doesn't exist
+                if (!idColumnExists) {
+                    stmt.execute("ALTER TABLE users ADD COLUMN id VARCHAR(100)");
+                    System.out.println("✓ Added 'id' column to 'users' table (migration)");
+                    System.out.flush();
+                } else {
+                    System.out.println("✓ 'id' column already exists in 'users' table");
+                    System.out.flush();
+                }
+            } catch (SQLException e) {
+                // Check if error is about column already existing
+                String errorMsg = e.getMessage();
+                if (errorMsg != null && (errorMsg.contains("already exists") || 
+                    errorMsg.contains("Duplicate column") || 
+                    errorMsg.contains("duplicate column name"))) {
+                    System.out.println("✓ 'id' column already exists in 'users' table");
+                    System.out.flush();
+                } else {
+                    // Try alternative method - check columns directly
+                    try {
+                        java.sql.ResultSet cols = stmt.executeQuery(
+                            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS " +
+                            "WHERE TABLE_SCHEMA = 'PUBLIC' AND TABLE_NAME = 'USERS'"
+                        );
+                        boolean foundId = false;
+                        while (cols.next()) {
+                            if ("ID".equalsIgnoreCase(cols.getString("COLUMN_NAME"))) {
+                                foundId = true;
+                                break;
+                            }
+                        }
+                        cols.close();
+                        
+                        if (!foundId) {
+                            // Try adding with different syntax
+                            stmt.execute("ALTER TABLE users ADD id VARCHAR(100)");
+                            System.out.println("✓ Added 'id' column to 'users' table (alternative method)");
+                            System.out.flush();
+                        }
+                    } catch (SQLException e2) {
+                        System.err.println("Warning: Could not add ID column: " + e2.getMessage());
+                        System.err.println("You may need to manually add the column: ALTER TABLE users ADD COLUMN id VARCHAR(100)");
+                    }
+                }
+            }
+            
+            // Create waste_records table
+            // H2 uses IDENTITY instead of AUTO_INCREMENT
+            String createWasteRecordsTable = """
+                CREATE TABLE IF NOT EXISTS waste_records (
+                    id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    role VARCHAR(50) NOT NULL,
+                    date VARCHAR(20) NOT NULL,
+                    area VARCHAR(100) NOT NULL,
+                    weight DOUBLE NOT NULL,
+                    type VARCHAR(50) NOT NULL,
+                    barangay VARCHAR(100)
+                )
+                """;
+            
+            // Execute table creation first
+            stmt.execute(createWasteRecordsTable);
+            System.out.println("✓ Created/verified 'waste_records' table");
+            System.out.flush();
+            
+            // Add barangay column to existing waste_records table if it doesn't exist (migration)
+            try {
+                // Check if barangay column exists
+                java.sql.ResultSet rs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS " +
+                    "WHERE TABLE_SCHEMA = 'PUBLIC' " +
+                    "AND TABLE_NAME = 'WASTE_RECORDS' " +
+                    "AND COLUMN_NAME = 'BARANGAY'"
+                );
+                boolean barangayColumnExists = false;
+                if (rs.next()) {
+                    barangayColumnExists = rs.getInt(1) > 0;
+                }
+                rs.close();
+                
+                // Add barangay column if it doesn't exist
+                if (!barangayColumnExists) {
+                    stmt.execute("ALTER TABLE waste_records ADD COLUMN barangay VARCHAR(100)");
+                    System.out.println("✓ Added 'barangay' column to 'waste_records' table (migration)");
+                    System.out.flush();
+                } else {
+                    System.out.println("✓ 'barangay' column already exists in 'waste_records' table");
+                    System.out.flush();
+                }
+            } catch (SQLException e) {
+                // Check if error is about column already existing
+                String errorMsg = e.getMessage();
+                if (errorMsg != null && (errorMsg.contains("already exists") || 
+                    errorMsg.contains("Duplicate column") || 
+                    errorMsg.contains("duplicate column name"))) {
+                    System.out.println("✓ 'barangay' column already exists in 'waste_records' table");
+                    System.out.flush();
+                } else {
+                    System.err.println("Warning: Could not add barangay column: " + e.getMessage());
+                }
+            }
+            
+            // Create requests table
+            // H2 uses IDENTITY instead of AUTO_INCREMENT
+            String createRequestsTable = """
+                CREATE TABLE IF NOT EXISTS requests (
+                    id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    timestamp VARCHAR(50) NOT NULL,
+                    requester VARCHAR(50) NOT NULL,
+                    barangay VARCHAR(100) NOT NULL,
+                    request_type VARCHAR(50) NOT NULL,
+                    location VARCHAR(200),
+                    description TEXT,
+                    num_sacks INT DEFAULT 0,
+                    waste_type VARCHAR(50),
+                    status VARCHAR(50) NOT NULL,
+                    target_role VARCHAR(50)
+                )
+                """;
+            
+            // Create pending_registrations table
+            String createPendingRegistrationsTable = """
+                CREATE TABLE IF NOT EXISTS pending_registrations (
+                    username VARCHAR(50) PRIMARY KEY,
+                    password VARCHAR(100) NOT NULL,
+                    role VARCHAR(50) NOT NULL,
+                    id VARCHAR(100) NOT NULL,
+                    status VARCHAR(50) NOT NULL DEFAULT 'Pending'
+                )
+                """;
+            
+            // Execute table creation for other tables
+            // Note: users table and waste_records table were already created above with migrations
+            System.out.println("Creating remaining tables...");
+            System.out.println();
+            
+            stmt.execute(createRequestsTable);
+            System.out.println("✓ Created/verified 'requests' table");
+            System.out.flush();
+            
+            stmt.execute(createPendingRegistrationsTable);
+            System.out.println("✓ Created/verified 'pending_registrations' table");
+            System.out.flush();
+            
+            System.out.println();
+            System.out.println("========================================");
+            System.out.println("Database initialized successfully!");
+            System.out.println("========================================");
+            System.out.println("Database folder: " + DatabaseConfig.getDatabaseFolder());
+            System.out.println("Database file: " + new java.io.File(DatabaseConfig.getDatabaseFolder() + "/greenvault.mv.db").getAbsolutePath());
+            System.out.println();
+            
+        } catch (SQLException e) {
+            System.err.println("========================================");
+            System.err.println("Error initializing database!");
+            System.err.println("========================================");
+            System.err.println("Error: " + e.getMessage());
+            System.err.println();
+            System.err.println("Common issues:");
+            System.err.println("1. Database file might be locked by another process");
+            System.err.println("2. Insufficient permissions to create data directory");
+            System.err.println("3. H2 JAR file might not be in classpath");
+            System.err.println("========================================");
+            e.printStackTrace();
+            System.exit(1);
+        } catch (Exception e) {
+            System.err.println("========================================");
+            System.err.println("Unexpected error initializing database!");
+            System.err.println("========================================");
+            System.err.println("Error: " + e.getMessage());
+            System.err.println("========================================");
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+    
+    /**
+     * Checks if the database tables exist.
+     * @return true if all tables exist, false otherwise
+     */
+    public static boolean isDatabaseInitialized() {
+        try (Connection conn = DatabaseConfig.getConnection();
+             Statement stmt = conn.createStatement()) {
+            
+            // Check if all four tables exist
+            java.sql.ResultSet rs = stmt.executeQuery(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES " +
+                "WHERE TABLE_SCHEMA = 'PUBLIC' " +
+                "AND TABLE_NAME IN ('USERS', 'WASTE_RECORDS', 'REQUESTS', 'PENDING_REGISTRATIONS')"
+            );
+            
+            if (rs.next()) {
+                int tableCount = rs.getInt(1);
+                return tableCount == 4;
+            }
+            return false;
+            
+        } catch (SQLException e) {
+            return false;
+        }
+    }
+    
+    /**
+     * Main method to initialize database standalone.
+     */
+    public static void main(String[] args) {
+        // Flush output to ensure it's visible
+        System.out.flush();
+        System.err.flush();
+        
+        // Always run initializeDatabase to ensure migrations (like ID column) are applied
+        // Even if tables exist, migrations need to run
+            System.out.println("========================================");
+        System.out.println("Initializing/Updating Database");
+            System.out.println("========================================");
+            System.out.println();
+        
+        initializeDatabase();
+        
+        System.out.println();
+        System.out.println("========================================");
+        System.out.println("Database initialization complete!");
+        System.out.println("========================================");
+            System.out.println();
+        
+        // Force flush before exit
+        System.out.flush();
+        System.err.flush();
+    }
+}
+
