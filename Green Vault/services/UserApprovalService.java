@@ -1,0 +1,356 @@
+package services;
+
+import dao.PendingRegistrationDAO;
+import dao.UserDAO;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Service class for managing user registration approvals.
+ * Handles pending registrations that require ID approval.
+ * Now uses H2 database via PendingRegistrationDAO.
+ */
+public class UserApprovalService {
+    
+    /**
+     * Adds a pending registration that requires approval.
+     * First saves to .txt file, then automatically imports to database.
+     * @param username The username
+     * @param password The password
+     * @param role The role
+     * @param id The ID that needs approval
+     * @return true if successful
+     */
+    public static boolean addPendingRegistration(String username, String password, String role, String id) {
+        // Step 1: Save to .txt file first
+        File txtFile = new File("data/pending_registration.txt");
+        
+        try {
+            // Ensure data directory exists
+            txtFile.getParentFile().mkdirs();
+            
+            // Append to .txt file (pipe-delimited format: username|password|role|id|status)
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(txtFile, true))) {
+                // Check if file is empty or doesn't exist, write header
+                if (!txtFile.exists() || txtFile.length() == 0) {
+                    writer.write("# Pending User Registrations Requiring Approval");
+                    writer.newLine();
+                    writer.write("# Format: username|password|role|id|status");
+                    writer.newLine();
+                    writer.newLine();
+                }
+                
+                // Write pending registration data (status defaults to 'Pending')
+                writer.write(username + "|" + password + "|" + role + "|" + id + "|Pending");
+                writer.newLine();
+                writer.flush();
+            }
+            
+            // Step 2: Automatically import from .txt to database
+            boolean success = PendingRegistrationDAO.addPendingRegistration(username, password, role, id);
+            if (!success) {
+                System.err.println("Warning: Failed to add pending registration to database (username might already exist)");
+            }
+            return success;
+            
+        } catch (IOException e) {
+            System.err.println("Error writing to .txt file: " + e.getMessage());
+            e.printStackTrace();
+            // Still try to save to database even if .txt write fails
+        try {
+            return PendingRegistrationDAO.addPendingRegistration(username, password, role, id);
+            } catch (SQLException sqlEx) {
+                System.err.println("Error adding pending registration: " + sqlEx.getMessage());
+                sqlEx.printStackTrace();
+                return false;
+            }
+        } catch (SQLException e) {
+            System.err.println("Error adding pending registration: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+    
+    /**
+     * Gets all pending registrations.
+     * @return List of pending registrations {username, password, role, id, status}
+     */
+    public static List<Object[]> getPendingRegistrations() {
+        try {
+            return PendingRegistrationDAO.getPendingRegistrations();
+        } catch (SQLException e) {
+            System.err.println("Error loading pending registrations: " + e.getMessage());
+            e.printStackTrace();
+            return new java.util.ArrayList<>();
+        }
+    }
+    
+    /**
+     * Approves a pending registration.
+     * @param username The username to approve
+     * @return true if successful
+     */
+    public static boolean approveRegistration(String username) {
+        // Keep this method for backward compatibility – it only updates the status in DB.
+        try {
+            return PendingRegistrationDAO.updateStatus(username, "Approved");
+        } catch (SQLException e) {
+            System.err.println("Error approving registration: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    /**
+     * Approves a pending registration AND registers the user
+     * to their designated role file and the main users table.
+     *
+     * This is the method that should be used by the GUI when
+     * accepting a user from the Pending Registrations table.
+     *
+     * Applicable to roles requiring approval: City Officer, Garbage Collector
+     *
+     * Flow:
+     * 1) Load user data from pending_registrations (any status)
+     * 2) Check if the user already exists in users table
+     * 3) Update status to 'Approved' in pending_registrations table
+     * 4) Register the user via UserAuthenticationService.registerUserInDB
+     *    → writes to the correct role .txt file:
+     *       - City Officer → cityofficer.txt
+     *       - Garbage Collector → garbagecollector.txt
+     *    → AND adds to the H2 users table
+     * 5) Remove user from pending_registration.txt file
+     *
+     * @param username the username to approve and register
+     * @return true if fully successful, false otherwise
+     */
+    public static boolean approveAndRegister(String username) {
+        try {
+            // 1) Load user data from pending_registrations (any status)
+            Object[] userData = PendingRegistrationDAO.getUserDataByUsername(username);
+            if (userData == null) {
+                System.err.println("approveAndRegister: No pending registration found for username=" + username);
+                return false;
+            }
+
+            String password = (String) userData[0];
+            String role = (String) userData[1];
+            String id = (String) userData[2]; // Get ID from pending registration
+
+            // 2) Check if user already exists in main users table
+            if (UserDAO.userExists(username)) {
+                System.err.println("approveAndRegister: User already exists in users table: " + username);
+                return false;
+            }
+
+            // 3) Update status to 'Approved' in pending_registrations table
+            boolean statusUpdated = PendingRegistrationDAO.updateStatus(username, "Approved");
+            if (!statusUpdated) {
+                System.err.println("approveAndRegister: Failed to update status to Approved for " + username);
+                return false;
+            }
+
+            // 4) Register the user to the correct role file + users table (with ID)
+            // For roles that passed through pending approval, barangay is stored as "System"
+            String barangay = "System";
+            try {
+                UserAuthenticationService.registerUserInDB(username, password, role, barangay, id);
+            } catch (IllegalStateException ex) {
+                // If something went wrong while registering, log and fail
+                System.err.println("approveAndRegister: Error registering approved user: " + ex.getMessage());
+                ex.printStackTrace();
+                return false;
+            }
+
+            // 5) Remove user from pending_registration.txt file
+            removeUserFromPendingRegistrationFile(username);
+
+            return true;
+        } catch (SQLException e) {
+            System.err.println("Error approving and registering user: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+    
+    /**
+     * Rejects a pending registration.
+     * @param username The username to reject
+     * @return true if successful
+     */
+    public static boolean rejectRegistration(String username) {
+        try {
+            return PendingRegistrationDAO.updateStatus(username, "Rejected");
+        } catch (SQLException e) {
+            System.err.println("Error rejecting registration: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+    
+    /**
+     * Gets the user data from a pending registration.
+     * @param username The username
+     * @return Object array {password, role, id} or null if not found
+     */
+    public static Object[] getPendingUserData(String username) {
+        try {
+            return PendingRegistrationDAO.getPendingUserData(username);
+        } catch (SQLException e) {
+            System.err.println("Error getting pending user data: " + e.getMessage());
+            e.printStackTrace();
+            return null;
+        }
+    }
+    
+    /**
+     * Gets the user data from pending registration regardless of status (Pending, Approved, Rejected).
+     * Useful for retrieving data of already approved users.
+     * @param username The username
+     * @return Object array {password, role, id} or null if not found
+     */
+    public static Object[] getUserDataByUsername(String username) {
+        try {
+            return PendingRegistrationDAO.getUserDataByUsername(username);
+        } catch (SQLException e) {
+            System.err.println("Error getting user data by username: " + e.getMessage());
+            e.printStackTrace();
+            return null;
+        }
+    }
+    
+    /**
+     * Removes a user from pending registration (database).
+     * This is useful when deleting a user who might still be in pending status.
+     * @param username The username to remove
+     * @return true if successful, false if user not found or error occurred
+     */
+    public static boolean removeFromPendingRegistration(String username) {
+        try {
+            return PendingRegistrationDAO.delete(username);
+        } catch (SQLException e) {
+            System.err.println("Error removing from pending registration: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+    
+    /**
+     * Removes a user from the pending_registration.txt file.
+     * Called when a user is approved and registered to remove them from the pending file.
+     * @param username The username to remove from the file
+     */
+    private static void removeUserFromPendingRegistrationFile(String username) {
+        File txtFile = new File("data/pending_registration.txt");
+        
+        if (!txtFile.exists()) {
+            return; // File doesn't exist, nothing to do
+        }
+        
+        try {
+            // Read all lines from file
+            List<String> lines = new ArrayList<>();
+            
+            try (BufferedReader reader = new BufferedReader(new FileReader(txtFile))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    // Skip the line if it matches the username to remove
+                    if (!line.trim().isEmpty() && !line.startsWith("#")) {
+                        String[] parts = line.split("\\|");
+                        if (parts.length >= 1 && parts[0].trim().equals(username)) {
+                            // Skip this line (don't add it to lines list)
+                            continue;
+                        }
+                    }
+                    
+                    lines.add(line);
+                }
+            }
+            
+            // Write updated content back to file
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(txtFile))) {
+                for (String line : lines) {
+                    writer.write(line);
+                    writer.newLine();
+                }
+                writer.flush();
+            }
+            
+        } catch (IOException e) {
+            System.err.println("Error removing user from pending_registration.txt file: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Imports pending registrations from a .txt file (pipe-delimited format).
+     * Format: username|password|role|id|status
+     * Example: Vaneth12|mejos12|City Officer|2025-0991|Approved
+     * 
+     * @param file The .txt file to import from
+     * @return Number of registrations successfully imported
+     */
+    public static int importPendingRegistrationsFromTxt(File file) {
+        if (file == null || !file.exists()) {
+            return 0;
+        }
+        
+        int imported = 0;
+        int skipped = 0;
+        
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                // Skip empty lines and comments
+                if (line.isEmpty() || line.startsWith("#")) {
+                    continue;
+                }
+                
+                // Parse pipe-delimited format: username|password|role|id|status
+                String[] parts = line.split("\\|");
+                if (parts.length < 5) {
+                    skipped++;
+                    continue;
+                }
+                
+                try {
+                    String username = parts[0].trim();
+                    String password = parts[1].trim();
+                    String role = parts[2].trim();
+                    String id = parts[3].trim();
+                    String status = parts[4].trim();
+                    
+                    // Add pending registration
+                    boolean success = PendingRegistrationDAO.addPendingRegistration(username, password, role, id);
+                    if (success) {
+                        // Update status if not "Pending"
+                        if (!"Pending".equals(status)) {
+                            PendingRegistrationDAO.updateStatus(username, status);
+                        }
+                        imported++;
+                    } else {
+                        skipped++; // Username might already exist
+                    }
+                } catch (SQLException e) {
+                    System.err.println("Error importing line: " + line + " - " + e.getMessage());
+                    skipped++;
+                }
+            }
+            
+            System.out.println("Import complete: " + imported + " registrations imported, " + skipped + " skipped");
+        } catch (IOException e) {
+            System.err.println("Error reading file: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return imported;
+    }
+}
