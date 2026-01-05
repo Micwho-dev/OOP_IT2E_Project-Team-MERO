@@ -250,5 +250,42 @@ public class WasteRecordDAO {
             return rows > 0;
         }
     }
+    
+    /**
+     * Gets waste records by role and date range.
+     * @param role The role to filter by
+     * @param dateFrom Start date (inclusive, format: yyyy-MM-dd)
+     * @param dateTo End date (inclusive, format: yyyy-MM-dd)
+     * @return List of waste records {id, role, date, area, weight, type, barangay}
+     * @throws SQLException if database error occurs
+     */
+    public static List<Object[]> getWasteRecordsByRoleAndDateRange(String role, String dateFrom, String dateTo) throws SQLException {
+        List<Object[]> records = new ArrayList<>();
+        String sql = "SELECT id, role, date, area, weight, type, barangay FROM waste_records WHERE role = ? AND date >= ? AND date <= ? ORDER BY id DESC";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, role);
+            pstmt.setString(2, dateFrom);
+            pstmt.setString(3, dateTo);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    records.add(new Object[]{
+                        rs.getInt("id"),
+                        rs.getString("role"),
+                        rs.getString("date"),
+                        rs.getString("area"),
+                        rs.getDouble("weight"),
+                        rs.getString("type"),
+                        rs.getString("barangay")
+                    });
+                }
+            }
+        }
+        
+        return records;
+    }
 }
 
