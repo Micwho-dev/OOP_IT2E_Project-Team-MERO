@@ -132,17 +132,25 @@ public class WasteDataService {
      * Deletes a waste record by ID for a specific role.
      * @param role The user's role
      * @param id The ID of the record to delete
+     * @return true if successfully deleted, false otherwise
      */
-    public static void deleteRecord(String role, int id) {
+    public static boolean deleteRecord(String role, int id) {
         try {
+            System.out.println("=== Attempting to delete waste record ID: " + id + " for role: " + role + " ===");
             boolean success = WasteRecordDAO.deleteWasteRecord(id);
             if (success) {
                 // Clear cache to force reload
                 clearCache(role);
+                System.out.println("✓ Successfully deleted record ID " + id + " from database");
+                System.out.println("=== Delete completed for record ID: " + id + " ===");
+            } else {
+                System.err.println("ERROR: Record ID " + id + " not found in database. Cannot delete.");
             }
+            return success;
         } catch (SQLException e) {
-            System.err.println("Error deleting waste record from database: " + e.getMessage());
+            System.err.println("ERROR deleting waste record from database: " + e.getMessage());
             e.printStackTrace();
+            return false;
         }
     }
     
