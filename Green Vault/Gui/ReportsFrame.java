@@ -226,12 +226,16 @@ public class ReportsFrame extends JFrame {
             }
         };
 
-        // Load users from database
+        // Load users from database (filter out Super Admin)
         try {
             java.util.List<Object[]> users = UserDAO.getAllUsers();
             for (Object[] user : users) {
                 // Format: {username, password, role, barangay}
+                String userRole = (String) user[2];
+                // Filter out Super Admin users - they should not be visible
+                if (!"Super Admin".equals(userRole)) {
                 model.addRow(new Object[]{user[0], user[2], user[3]});
+                }
             }
         } catch (SQLException e) {
             System.err.println("Error loading users: " + e.getMessage());
@@ -261,12 +265,16 @@ public class ReportsFrame extends JFrame {
                 JOptionPane.showMessageDialog(panel, 
                     imported + " users imported from:\n" + file.getAbsolutePath(),
                     "Import Complete", JOptionPane.INFORMATION_MESSAGE);
-                // Refresh table
+                // Refresh table (filter out Super Admin)
                 model.setRowCount(0);
                 try {
                     java.util.List<Object[]> users = UserDAO.getAllUsers();
                     for (Object[] user : users) {
+                        String userRole = (String) user[2];
+                        // Filter out Super Admin users - they should not be visible
+                        if (!"Super Admin".equals(userRole)) {
                         model.addRow(new Object[]{user[0], user[2], user[3]});
+                        }
                     }
                 } catch (SQLException ex) {
                     System.err.println("Error refreshing users: " + ex.getMessage());
