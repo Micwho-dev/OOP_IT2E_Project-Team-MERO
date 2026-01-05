@@ -29,6 +29,37 @@ public class UserApprovalService {
      * @return true if successful
      */
     public static boolean addPendingRegistration(String username, String password, String role, String id) {
+        return addPendingRegistration(username, password, role, id, null);
+    }
+    
+    /**
+     * Adds a pending registration that requires approval (with barangay).
+     * First saves to .txt file, then automatically imports to database.
+     * @param username The username
+     * @param password The password
+     * @param role The role
+     * @param id The ID that needs approval
+     * @param barangay The barangay (required for Barangay Captain)
+     * @return true if successful
+     */
+    public static boolean addPendingRegistration(String username, String password, String role, String id, String barangay) {
+        return addPendingRegistration(username, password, role, id, barangay, null, null, null);
+    }
+    
+    /**
+     * Adds a pending registration that requires approval (with barangay and name fields).
+     * First saves to .txt file, then automatically imports to database.
+     * @param username The username
+     * @param password The password
+     * @param role The role
+     * @param id The ID that needs approval
+     * @param barangay The barangay (required for Barangay Captain)
+     * @param firstName The first name
+     * @param middleName The middle name
+     * @param surname The surname
+     * @return true if successful
+     */
+    public static boolean addPendingRegistration(String username, String password, String role, String id, String barangay, String firstName, String middleName, String surname) {
         // Step 1: Save to .txt file first
         File txtFile = new File("data/pending_registration.txt");
         
@@ -54,7 +85,7 @@ public class UserApprovalService {
             }
             
             // Step 2: Automatically import from .txt to database
-            boolean success = PendingRegistrationDAO.addPendingRegistration(username, password, role, id);
+            boolean success = PendingRegistrationDAO.addPendingRegistration(username, password, role, id, barangay, firstName, middleName, surname);
             if (!success) {
                 System.err.println("Warning: Failed to add pending registration to database (username might already exist)");
             }
@@ -65,7 +96,7 @@ public class UserApprovalService {
             e.printStackTrace();
             // Still try to save to database even if .txt write fails
         try {
-            return PendingRegistrationDAO.addPendingRegistration(username, password, role, id);
+            return PendingRegistrationDAO.addPendingRegistration(username, password, role, id, barangay, firstName, middleName, surname);
             } catch (SQLException sqlEx) {
                 System.err.println("Error adding pending registration: " + sqlEx.getMessage());
                 sqlEx.printStackTrace();
@@ -115,7 +146,7 @@ public class UserApprovalService {
      * This is the method that should be used by the GUI when
      * accepting a user from the Pending Registrations table.
      *
-     * Applicable to roles requiring approval: City Officer, Garbage Collector
+     * Applicable to roles requiring approval: Admin, City Officer, Garbage Collector, Barangay Captain
      *
      * Flow:
      * 1) Load user data from pending_registrations (any status)
@@ -123,6 +154,8 @@ public class UserApprovalService {
      * 3) Update status to 'Approved' in pending_registrations table
      * 4) Register the user via UserAuthenticationService.registerUserInDB
      *    → writes to the correct role .txt file:
+     *       - Admin → admin.txt
+     *       - Barangay Captain → barangaycaptain.txt
      *       - City Officer → cityofficer.txt
      *       - Garbage Collector → garbagecollector.txt
      *    → AND adds to the H2 users table
@@ -143,6 +176,21 @@ public class UserApprovalService {
             String password = (String) userData[0];
             String role = (String) userData[1];
             String id = (String) userData[2]; // Get ID from pending registration
+            String barangay = userData.length > 3 ? (String) userData[3] : null; // Get barangay from pending registration
+            String firstName = userData.length > 4 ? (String) userData[4] : null; // Get firstName from pending registration
+            String middleName = userData.length > 5 ? (String) userData[5] : null; // Get middleName from pending registration
+            String surname = userData.length > 6 ? (String) userData[6] : null; // Get surname from pending registration
+            
+            // Normalize empty strings to null for optional fields
+            if (middleName != null && middleName.trim().isEmpty()) {
+                middleName = null;
+            }
+            if (firstName != null && firstName.trim().isEmpty()) {
+                firstName = null;
+            }
+            if (surname != null && surname.trim().isEmpty()) {
+                surname = null;
+            }
 
             // 2) Check if user already exists in main users table
             if (UserDAO.userExists(username)) {
@@ -158,10 +206,85 @@ public class UserApprovalService {
             }
 
             // 4) Register the user to the correct role file + users table (with ID)
-            // For roles that passed through pending approval, barangay is stored as "System"
-            String barangay = "System";
+            // For Barangay Captain, use the barangay from pending registration
+            // For other roles, use "System" if barangay is not provided
+            String finalBarangay = (barangay != null && !barangay.trim().isEmpty()) ? barangay : "System";
+            String finalId = (id == null || id.trim().isEmpty()) ? null : id;
             try {
-                UserAuthenticationService.registerUserInDB(username, password, role, barangay, id);
+                UserAuthenticationService.registerUserInDB(username, password, role, finalBarangay, finalId, firstName, middleName, surname);
+            } catch (IllegalStateException ex) {
+                // If something went wrong while registering, log and fail
+                System.err.println("approveAndRegister: Error registering approved user: " + ex.getMessage());
+                ex.printStackTrace();
+                return false;
+            }
+
+            // 5) Remove user from pending_registration.txt file
+            removeUserFromPendingRegistrationFile(username);
+
+            return true;
+        } catch (SQLException e) {
+            System.err.println("Error approving and registering user: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+    
+    /**
+     * Overloaded method to approve and register a user with a specific ID.
+     * This is used when Super Admin approves an Admin registration and needs to assign an ID.
+     *
+     * @param username the username to approve and register
+     * @param adminId the ID to assign to the Admin user
+     * @return true if fully successful, false otherwise
+     */
+    public static boolean approveAndRegister(String username, String adminId) {
+        try {
+            // 1) Load user data from pending_registrations (any status)
+            Object[] userData = PendingRegistrationDAO.getUserDataByUsername(username);
+            if (userData == null) {
+                System.err.println("approveAndRegister: No pending registration found for username=" + username);
+                return false;
+            }
+
+            String password = (String) userData[0];
+            String role = (String) userData[1];
+            String barangay = userData.length > 3 ? (String) userData[3] : null; // Get barangay from pending registration
+            String firstName = userData.length > 4 ? (String) userData[4] : null; // Get firstName from pending registration
+            String middleName = userData.length > 5 ? (String) userData[5] : null; // Get middleName from pending registration
+            String surname = userData.length > 6 ? (String) userData[6] : null; // Get surname from pending registration
+
+            // Normalize empty strings to null for optional fields
+            if (middleName != null && middleName.trim().isEmpty()) {
+                middleName = null;
+            }
+            if (firstName != null && firstName.trim().isEmpty()) {
+                firstName = null;
+            }
+            if (surname != null && surname.trim().isEmpty()) {
+                surname = null;
+            }
+
+            // 2) Check if user already exists in main users table
+            if (UserDAO.userExists(username)) {
+                System.err.println("approveAndRegister: User already exists in users table: " + username);
+                return false;
+            }
+
+            // 3) Update status to 'Approved' in pending_registrations table
+            boolean statusUpdated = PendingRegistrationDAO.updateStatus(username, "Approved");
+            if (!statusUpdated) {
+                System.err.println("approveAndRegister: Failed to update status to Approved for " + username);
+                return false;
+            }
+
+            // 4) Register the user to the correct role file + users table (with provided ID)
+            // For Barangay Captain, use the barangay from pending registration
+            // For other roles (like Admin), use "System" if barangay is not provided
+            String finalBarangay = (barangay != null && !barangay.trim().isEmpty()) ? barangay : "System";
+            String finalId = (adminId == null || adminId.trim().isEmpty()) ? null : adminId.trim();
+            try {
+                UserAuthenticationService.registerUserInDB(username, password, role, finalBarangay, finalId, firstName, middleName, surname);
             } catch (IllegalStateException ex) {
                 // If something went wrong while registering, log and fail
                 System.err.println("approveAndRegister: Error registering approved user: " + ex.getMessage());
