@@ -24,6 +24,7 @@ import services.RoleDataFileService;
 import utils.BarangayAreaMapper;
 import dao.UserDAO;
 import dao.WasteRecordDAO;
+import dao.PendingRegistrationDAO;
 import java.sql.SQLException;
 
 /**
@@ -36,6 +37,7 @@ public class DashboardFrame extends JFrame {
     private final String barangay;
     private JPanel mainContentPanel;
     private CardLayout cardLayout;
+    private DefaultTableModel viewRequestsTableModel; // Reference to view requests table model for auto-refresh
     
     public DashboardFrame(String username, String role, String barangay) {
         this.username = username;
@@ -83,8 +85,8 @@ public class DashboardFrame extends JFrame {
         mainContentPanel.add(createReportingPanel(), "REPORTS");         
         }
         
-        // Admin Panel - Admin only
-        if (role.equals("Admin")) {
+        // Admin Panel - Admin and Super Admin only
+        if (role.equals("Admin") || role.equals("Super Admin")) {
         mainContentPanel.add(createAdminPanel(), "ADMIN");
         }
         
@@ -109,8 +111,8 @@ public class DashboardFrame extends JFrame {
         mainContentPanel.add(createGarbageCollectorRequestsPanel(), "VIEW_GARBAGE_REQUESTS");
         }
         
-        // Admin-only panels
-        if (role.equals("Admin")) {
+        // Admin-only panels (Admin and Super Admin)
+        if (role.equals("Admin") || role.equals("Super Admin")) {
             mainContentPanel.add(createAllUsersPanel(), "ALL_USERS");
             mainContentPanel.add(createAllWasteRecordsPanel(), "ALL_RECORDS");
             mainContentPanel.add(createSystemStatsPanel(), "SYSTEM_STATS");
@@ -163,7 +165,24 @@ public class DashboardFrame extends JFrame {
         // 1) View Requests  -> gikan sa Barangay Members (requestform.txt)
         // 2) View Requests for Approval -> mga na-forward na nga iyang i-approve para sa City Officer
         if (role.equals("Barangay Captain")) {
-            addNavButton(sidebar, "📋 View Requests", "VIEW_REQUESTS");
+            // Add special navigation button for VIEW_REQUESTS that auto-refreshes
+            JButton viewRequestsBtn = new JButton("📋 View Requests");
+            viewRequestsBtn.setMaximumSize(new Dimension(220, 40));
+            viewRequestsBtn.setAlignmentX(Component.CENTER_ALIGNMENT);
+            viewRequestsBtn.setBackground(new Color(60, 60, 60));
+            viewRequestsBtn.setForeground(Color.WHITE);
+            viewRequestsBtn.setFocusPainted(false);
+            viewRequestsBtn.setBorderPainted(false);
+            viewRequestsBtn.addActionListener(e -> {
+                cardLayout.show(mainContentPanel, "VIEW_REQUESTS");
+                // Auto-refresh the view requests table when navigating to it
+                if (viewRequestsTableModel != null) {
+                    refreshRequestsTable(viewRequestsTableModel);
+                }
+            });
+            sidebar.add(viewRequestsBtn);
+            sidebar.add(Box.createVerticalStrut(10));
+            
             addNavButton(sidebar, "Approval for Request", "VIEW_CAPTAIN_REQUESTS");
         }
         
@@ -177,8 +196,8 @@ public class DashboardFrame extends JFrame {
             addNavButton(sidebar, "📋 View Requests for Garbage Collector", "VIEW_GARBAGE_REQUESTS");
         }
         
-        // 5. System Administration (Admin only)
-        if (role.equals("Admin")) {
+        // 5. System Administration (Admin and Super Admin only)
+        if (role.equals("Admin") || role.equals("Super Admin")) {
              addNavButton(sidebar, "⚙️ System Administration", "ADMIN");
              addNavButton(sidebar, "👥 View All Users", "ALL_USERS");
              addNavButton(sidebar, "📊 View All Waste Records", "ALL_RECORDS");
@@ -428,19 +447,37 @@ public class DashboardFrame extends JFrame {
                     try {
                         int id = (int) tableModel.getValueAt(row, 0);
                         String recordRole = (String) tableModel.getValueAt(row, 6); // Role is in column 6
+                        boolean deleteSuccess = false;
                         
                         // Delete based on the record's role
                         if (recordRole != null && recordRole.equals("Garbage Collector")) {
-                            RequestService.deleteManageWasteRecord(id);
+                            deleteSuccess = RequestService.deleteManageWasteRecord(id);
                         } else if (recordRole != null) {
-                            WasteDataService.deleteRecord(recordRole, id);
+                            deleteSuccess = WasteDataService.deleteRecord(recordRole, id);
+                        } else {
+                            JOptionPane.showMessageDialog(panel, 
+                                "Cannot determine record role. Cannot delete.", 
+                                "Delete Error", JOptionPane.ERROR_MESSAGE);
+                            return;
                         }
-                        tableModel.removeRow(row);
-                        JOptionPane.showMessageDialog(panel, "Record deleted successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                        
+                        if (deleteSuccess) {
+                            // Refresh the table to ensure consistency with database
+                            tableModel.setRowCount(0);
+                            loadAllWasteRecords(tableModel);
+                            JOptionPane.showMessageDialog(panel, 
+                                "Record ID " + id + " deleted successfully!", 
+                                "Success", JOptionPane.INFORMATION_MESSAGE);
+                        } else {
+                            JOptionPane.showMessageDialog(panel, 
+                                "Failed to delete record ID " + id + ".\nRecord may not exist in database.", 
+                                "Delete Error", JOptionPane.ERROR_MESSAGE);
+                        }
                     } catch (Exception ex) {
                         JOptionPane.showMessageDialog(panel, 
-                            "Error deleting record: " + ex.getMessage(), 
+                            "Error deleting record: " + ex.getMessage() + "\nPlease check the console for details.", 
                             "Delete Error", JOptionPane.ERROR_MESSAGE);
+                        ex.printStackTrace();
                     }
                 }
             } else {
@@ -807,6 +844,7 @@ public class DashboardFrame extends JFrame {
                 if (userData != null) {
                     // userData format: {password, role, id}
                     String role = (String) userData[1];
+                    String existingId = userData[2] != null ? (String) userData[2] : "";
                     
                     // Check if user already exists in the system (safety check)
                     Object[] existingUser = UserAuthenticationService.getUserInfo(username);
@@ -818,12 +856,59 @@ public class DashboardFrame extends JFrame {
                         return;
                     }
                     
+                    // For Admin registrations, Super Admin must provide an ID
+                    String finalId = existingId;
+                    if ("Admin".equals(role)) {
+                        // Show dialog to input Admin ID
+                        JPanel idPanel = new JPanel(new BorderLayout(5, 5));
+                        idPanel.add(new JLabel("Enter Admin ID:"), BorderLayout.NORTH);
+                        JTextField idField = new JTextField(20);
+                        if (!existingId.isEmpty() && !"N/A".equals(existingId)) {
+                            idField.setText(existingId);
+                        }
+                        idPanel.add(idField, BorderLayout.CENTER);
+                        
+                        int result = JOptionPane.showConfirmDialog(panel, idPanel, 
+                            "Admin ID Required", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+                        
+                        if (result == JOptionPane.OK_OPTION) {
+                            finalId = idField.getText().trim();
+                            if (finalId.isEmpty()) {
+                                JOptionPane.showMessageDialog(panel, 
+                                    "Admin ID cannot be empty. Please enter a valid ID.", 
+                                    "ID Required", JOptionPane.WARNING_MESSAGE);
+                                return;
+                            }
+                            
+                            // Update the pending registration record with the ID before approving
+                            // This ensures the ID is visible in the table if user refreshes
+                            try {
+                                PendingRegistrationDAO.updateId(username, finalId);
+                            } catch (SQLException ex) {
+                                System.err.println("Warning: Could not update ID in pending registration: " + ex.getMessage());
+                                // Continue with approval anyway
+                            }
+                        } else {
+                            // User cancelled
+                            return;
+                        }
+                    }
+                    
                     // Approve AND register the user in one service call.
                     // This will:
                     //  1) Update status to 'Approved' in pending_registrations
                     //  2) Register user to the correct role .txt file
                     //  3) Create the user in the main users table
-                    if (UserApprovalService.approveAndRegister(username)) {
+                    boolean success;
+                    if ("Admin".equals(role) && !finalId.isEmpty()) {
+                        // Use overloaded method with ID for Admin
+                        success = UserApprovalService.approveAndRegister(username, finalId);
+                    } else {
+                        // Use regular method (uses existing ID from pending registration)
+                        success = UserApprovalService.approveAndRegister(username);
+                    }
+                    
+                    if (success) {
                             refreshPendingTable(tableModel);
                             JOptionPane.showMessageDialog(panel, 
                                 "User " + username + " (" + role + ") has been approved and registered to " + 
@@ -890,11 +975,34 @@ public class DashboardFrame extends JFrame {
     private void refreshPendingTable(DefaultTableModel tableModel) {
         try {
             tableModel.setRowCount(0);
-            for (Object[] row : UserApprovalService.getPendingRegistrations()) {
-                // row format: {username, password, role, id, status}
-                tableModel.addRow(new Object[]{row[0], row[2], row[3], row[4]});
+            List<Object[]> pending = UserApprovalService.getPendingRegistrations();
+            
+            if (pending == null || pending.isEmpty()) {
+                // No pending registrations found
+                System.out.println("No pending registrations found in database.");
+            } else {
+                System.out.println("Found " + pending.size() + " pending registration(s)");
+                for (Object[] row : pending) {
+                    // row format: {username, password, role, id, status, barangay}
+                    String userRole = (String) row[2]; // row[2] is the role
+                    
+                    // Filter: Only Super Admin can see Admin registrations
+                    // Regular Admin should NOT see Admin registrations
+                    if ("Admin".equals(userRole) && !"Super Admin".equals(this.role)) {
+                        continue; // Skip Admin registrations for non-Super Admin users
+                    }
+                    
+                    // Display ID - show "N/A" if empty or null
+                    String displayId = row[3] != null && !((String) row[3]).trim().isEmpty() 
+                        ? (String) row[3] 
+                        : "N/A";
+                    
+                    tableModel.addRow(new Object[]{row[0], row[2], displayId, row[4]});
+                }
             }
         } catch (Exception e) {
+            System.err.println("Error refreshing pending registrations: " + e.getMessage());
+            e.printStackTrace();
             JOptionPane.showMessageDialog(null, 
                 "Error refreshing pending registrations: " + e.getMessage(), 
                 "Refresh Error", JOptionPane.ERROR_MESSAGE);
@@ -968,7 +1076,7 @@ public class DashboardFrame extends JFrame {
         wasteCollectionPanel.add(wasteSubmitBtn);
         
         // ========== EQUIPMENT REQUEST FORM ==========
-        JPanel equipmentPanel = new JPanel(new GridLayout(6, 2, 10, 15));
+        JPanel equipmentPanel = new JPanel(new GridLayout(7, 2, 10, 15));
         equipmentPanel.setBorder(new EmptyBorder(20, 0, 20, 0));
         
         equipmentPanel.add(new JLabel("Equipment Type:"));
@@ -984,6 +1092,10 @@ public class DashboardFrame extends JFrame {
         equipmentPanel.add(new JLabel("Quantity:"));
         JTextField equipmentQtyField = new JTextField();
         equipmentPanel.add(equipmentQtyField);
+        
+        equipmentPanel.add(new JLabel("Location:"));
+        JTextField equipmentLocationField = new JTextField();
+        equipmentPanel.add(equipmentLocationField);
         
         equipmentPanel.add(new JLabel("Specifications/Details:"));
         JTextArea equipmentSpecArea = new JTextArea(3, 30);
@@ -1082,8 +1194,14 @@ public class DashboardFrame extends JFrame {
         equipmentSubmitBtn.addActionListener(e -> {
             String equipmentType = (String) equipmentTypeCombo.getSelectedItem();
             String qtyText = equipmentQtyField.getText().trim();
+            String location = equipmentLocationField.getText().trim();
             String specs = equipmentSpecArea.getText().trim();
             String purpose = equipmentDescArea.getText().trim();
+            
+            if (location.isEmpty()) {
+                JOptionPane.showMessageDialog(panel, "Please enter a location for the equipment request.", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
             
             if (purpose.isEmpty()) {
                 JOptionPane.showMessageDialog(panel, "Please enter the purpose/reason for the equipment request.", "Validation Error", JOptionPane.ERROR_MESSAGE);
@@ -1107,10 +1225,11 @@ public class DashboardFrame extends JFrame {
             String description = String.format("Equipment: %s | Quantity: %d | Specs: %s | Purpose: %s", 
                 equipmentType, quantity, specs.isEmpty() ? "N/A" : specs, purpose);
             
-            boolean success = RequestService.createRequest(username, barangay, "Equipment Request", "N/A", description, 0, "N/A");
+            boolean success = RequestService.createRequest(username, barangay, "Equipment Request", location, description, 0, "N/A");
             if (success) {
                 JOptionPane.showMessageDialog(panel, "Request submitted successfully! The Barangay Captain will review it.", "Success", JOptionPane.INFORMATION_MESSAGE);
                 equipmentQtyField.setText("");
+                equipmentLocationField.setText("");
                 equipmentSpecArea.setText("");
                 equipmentDescArea.setText("");
             } else {
@@ -1147,6 +1266,9 @@ public class DashboardFrame extends JFrame {
             }
         };
         
+        // Store reference for auto-refresh when navigating to this panel
+        viewRequestsTableModel = tableModel;
+        
         JTable table = new JTable(tableModel);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.setRowHeight(25);
@@ -1155,11 +1277,25 @@ public class DashboardFrame extends JFrame {
         table.setSelectionBackground(UIConstants.ACCENT_GREEN);
         table.setSelectionForeground(Color.WHITE);
         
-        // Load requests once when opening the view
+        // Load requests when opening the view
         refreshRequestsTable(tableModel);
         
-        // Pure view-only table (no action buttons)
-        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        // Add refresh button panel
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        buttonPanel.setBorder(new EmptyBorder(5, 0, 5, 0));
+        
+        JButton refreshBtn = new JButton("🔄 Refresh");
+        refreshBtn.setBackground(UIConstants.PRIMARY_GREEN);
+        refreshBtn.setForeground(Color.BLACK);
+        refreshBtn.addActionListener(e -> refreshRequestsTable(tableModel));
+        buttonPanel.add(refreshBtn);
+        
+        // Create a container panel for button and table
+        JPanel contentPanel = new JPanel(new BorderLayout());
+        contentPanel.add(buttonPanel, BorderLayout.NORTH);
+        contentPanel.add(new JScrollPane(table), BorderLayout.CENTER);
+        
+        panel.add(contentPanel, BorderLayout.CENTER);
         
         return panel;
     }
@@ -1736,10 +1872,18 @@ public class DashboardFrame extends JFrame {
                 String username = (String) tableModel.getValueAt(row, 0);
                 String userRole = (String) tableModel.getValueAt(row, 1);
                 
-                // Prevent deleting Admin users
-                if ("Admin".equals(userRole)) {
+                // Prevent deleting Super Admin users (only Super Admin can delete Admins)
+                if ("Super Admin".equals(userRole)) {
                     JOptionPane.showMessageDialog(panel, 
-                        "Cannot delete Admin users!", 
+                        "Cannot delete Super Admin users!", 
+                        "Delete Restricted", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                
+                // Only Super Admin can delete Admin users
+                if ("Admin".equals(userRole) && !"Super Admin".equals(role)) {
+                    JOptionPane.showMessageDialog(panel, 
+                        "Only Super Admin can delete Admin users!", 
                         "Delete Restricted", JOptionPane.WARNING_MESSAGE);
                     return;
                 }
@@ -1780,10 +1924,15 @@ public class DashboardFrame extends JFrame {
             String query = searchField.getText().trim().toLowerCase();
             tableModel.setRowCount(0);
             for (Object[] row : getAllUsersFromAllRoles()) {
+                // row format: {username, role, barangay}
+                // Filter out Super Admin users from search results
+                String userRole = (String) row[1];
+                if (!"Super Admin".equals(userRole)) {
                 for (Object cell : row) {
                     if (cell.toString().toLowerCase().contains(query)) {
                         tableModel.addRow(row);
                         break;
+                        }
                     }
                 }
             }
@@ -1914,8 +2063,27 @@ public class DashboardFrame extends JFrame {
         statsArea.setEditable(false);
         statsArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
         
-        JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        // Date Range Panel
+        JPanel dateRangePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        dateRangePanel.setBorder(new javax.swing.border.TitledBorder("Date Range Filter (Optional)"));
         
+        JLabel dateFromLabel = new JLabel("Date From:");
+        JTextField dateFromField = new JTextField(12);
+        dateFromField.setToolTipText("Format: YYYY-MM-DD (e.g., 2025-01-01). Can be used alone for single date filter.");
+        
+        JLabel dateToLabel = new JLabel("Date To:");
+        JTextField dateToField = new JTextField(12);
+        dateToField.setToolTipText("Format: YYYY-MM-DD (e.g., 2025-12-30). Leave empty to filter by Date From only.");
+        
+        dateRangePanel.add(dateFromLabel);
+        dateRangePanel.add(dateFromField);
+        dateRangePanel.add(dateToLabel);
+        dateRangePanel.add(dateToField);
+        
+        JPanel controls = new JPanel(new BorderLayout(5, 5));
+        controls.add(dateRangePanel, BorderLayout.NORTH);
+        
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
         JButton generateBtn = new JButton("📊 Generate Statistics");
         generateBtn.setBackground(UIConstants.PRIMARY_GREEN);
         generateBtn.setForeground(Color.WHITE);
@@ -1925,6 +2093,53 @@ public class DashboardFrame extends JFrame {
             sb.append("   GREENVAULT SYSTEM STATISTICS\n");
             sb.append("   Generated: ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())).append("\n");
             sb.append("========================================\n\n");
+            
+            // Get date range
+            String dateFrom = dateFromField.getText().trim();
+            String dateTo = dateToField.getText().trim();
+            boolean useDateFilter = !dateFrom.isEmpty();
+            boolean singleDateFilter = !dateFrom.isEmpty() && dateTo.isEmpty();
+            boolean dateRangeFilter = !dateFrom.isEmpty() && !dateTo.isEmpty();
+            
+            if (useDateFilter) {
+                // Validate date format
+                try {
+                    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+                    sdf.setLenient(false);
+                    sdf.parse(dateFrom);
+                    
+                    // If single date filter (only Date From filled)
+                    if (singleDateFilter) {
+                        // Use the same date for both from and to (single day filter)
+                        dateTo = dateFrom;
+                        sb.append("DATE: ").append(dateFrom).append("\n\n");
+                    } else if (dateRangeFilter) {
+                        // Validate dateTo format
+                        sdf.parse(dateTo);
+                        
+                        // Validate date range
+                        Date fromDate = sdf.parse(dateFrom);
+                        Date toDate = sdf.parse(dateTo);
+                        if (fromDate.after(toDate)) {
+                            JOptionPane.showMessageDialog(panel, 
+                                "Date From must be before or equal to Date To.", 
+                                "Invalid Date Range", 
+                                JOptionPane.ERROR_MESSAGE);
+                            return;
+                        }
+                        
+                        sb.append("DATE RANGE: ").append(dateFrom).append(" to ").append(dateTo).append("\n\n");
+                    }
+                } catch (java.text.ParseException ex) {
+                    JOptionPane.showMessageDialog(panel, 
+                        "Invalid date format. Please use YYYY-MM-DD (e.g., 2025-01-01)", 
+                        "Invalid Date Format", 
+                        JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+            } else {
+                sb.append("DATE RANGE: All Records\n\n");
+            }
             
             // User Statistics
             List<Object[]> allUsers = getAllUsersFromAllRoles();
@@ -1942,24 +2157,53 @@ public class DashboardFrame extends JFrame {
             }
             sb.append("\n");
             
-            // Waste Records Statistics
+            // Waste Records Statistics (with date filter if provided)
             String[] roles = {"Garbage Collector", "Barangay Member"};
             double totalWeight = 0;
             int totalRecords = 0;
             Map<String, Double> weightByType = new HashMap<>();
             Map<String, Integer> recordsByRole = new HashMap<>();
             
-            for (String r : roles) {
-                List<Object[]> records = WasteDataService.getAllRecords(r);
-                recordsByRole.put(r, records.size());
-                totalRecords += records.size();
-                
-                for (Object[] record : records) {
-                    double weight = (double) record[3];
-                    String type = (String) record[4];
-                    totalWeight += weight;
-                    weightByType.put(type, weightByType.getOrDefault(type, 0.0) + weight);
+            try {
+                for (String r : roles) {
+                    List<Object[]> records;
+                    
+                    if (useDateFilter) {
+                        // Get records filtered by date range
+                        records = WasteRecordDAO.getWasteRecordsByRoleAndDateRange(r, dateFrom, dateTo);
+                        // Convert from {id, role, date, area, weight, type, barangay} to {id, date, area, weight, type}
+                        List<Object[]> convertedRecords = new ArrayList<>();
+                        for (Object[] record : records) {
+                            convertedRecords.add(new Object[]{
+                                record[0], // id
+                                record[2], // date
+                                record[3], // area
+                                record[4], // weight
+                                record[5]  // type
+                            });
+                        }
+                        records = convertedRecords;
+                    } else {
+                        // Get all records (existing behavior)
+                        records = WasteDataService.getAllRecords(r);
+                    }
+                    
+                    recordsByRole.put(r, records.size());
+                    totalRecords += records.size();
+                    
+                    for (Object[] record : records) {
+                        double weight = (double) record[3];
+                        String type = (String) record[4];
+                        totalWeight += weight;
+                        weightByType.put(type, weightByType.getOrDefault(type, 0.0) + weight);
+                    }
                 }
+            } catch (SQLException ex) {
+                JOptionPane.showMessageDialog(panel, 
+                    "Error retrieving waste records: " + ex.getMessage(), 
+                    "Database Error", 
+                    JOptionPane.ERROR_MESSAGE);
+                return;
             }
             
             sb.append("WASTE RECORDS STATISTICS:\n");
@@ -1982,7 +2226,9 @@ public class DashboardFrame extends JFrame {
             statsArea.setText(sb.toString());
         });
         
-        controls.add(generateBtn);
+        buttonPanel.add(generateBtn);
+        controls.add(buttonPanel, BorderLayout.SOUTH);
+        
         panel.add(controls, BorderLayout.SOUTH);
         panel.add(new JScrollPane(statsArea), BorderLayout.CENTER);
         
@@ -2007,8 +2253,11 @@ public class DashboardFrame extends JFrame {
                 String role = (String) dbUser[2];
                 String barangay = dbUser[3] != null ? (String) dbUser[3] : "N/A";
                 
+                // Filter out Super Admin users - they should not be visible in the list
+                if (!"Super Admin".equals(role)) {
                 // Add to list without password
                 allUsers.add(new Object[]{username, role, barangay});
+                }
             }
         } catch (SQLException e) {
             System.err.println("Error reading users from database: " + e.getMessage());
@@ -2061,7 +2310,8 @@ public class DashboardFrame extends JFrame {
                             String fileRole = parts[2].trim();
                             String barangay = parts.length >= 4 ? parts[3].trim() : "N/A";
                             
-                            if (fileRole.equals(role)) {
+                            // Filter out Super Admin users - they should not be visible
+                            if (fileRole.equals(role) && !"Super Admin".equals(fileRole)) {
                                 allUsers.add(new Object[]{username, fileRole, barangay});
                             }
                         } catch (Exception e) {
