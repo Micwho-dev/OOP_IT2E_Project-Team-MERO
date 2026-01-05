@@ -21,11 +21,14 @@ public class UserDAO {
      * @param role The user's role
      * @param barangay The user's barangay
      * @param id The user's ID (can be null for roles that don't require ID)
+     * @param firstName The user's first name (can be null)
+     * @param middleName The user's middle name (can be null)
+     * @param surname The user's surname (can be null)
      * @return true if successful, false if user already exists
      * @throws SQLException if database error occurs
      */
-    public static boolean createUser(String username, String password, String role, String barangay, String id) throws SQLException {
-        String sql = "INSERT INTO users (username, password, role, barangay, id) VALUES (?, ?, ?, ?, ?)";
+    public static boolean createUser(String username, String password, String role, String barangay, String id, String firstName, String middleName, String surname) throws SQLException {
+        String sql = "INSERT INTO users (username, password, role, barangay, id, first_name, middle_name, surname) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         
         try (Connection conn = DatabaseConfig.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -35,6 +38,9 @@ public class UserDAO {
             pstmt.setString(3, role);
             pstmt.setString(4, barangay);
             pstmt.setString(5, id); // Can be null
+            pstmt.setString(6, firstName); // Can be null
+            pstmt.setString(7, middleName); // Can be null
+            pstmt.setString(8, surname); // Can be null
             
             int rows = pstmt.executeUpdate();
             return rows > 0;
@@ -49,6 +55,20 @@ public class UserDAO {
     }
     
     /**
+     * Creates a new user in the database (overloaded method without name fields for backward compatibility).
+     * @param username The username
+     * @param password The password
+     * @param role The user's role
+     * @param barangay The user's barangay
+     * @param id The user's ID (can be null for roles that don't require ID)
+     * @return true if successful, false if user already exists
+     * @throws SQLException if database error occurs
+     */
+    public static boolean createUser(String username, String password, String role, String barangay, String id) throws SQLException {
+        return createUser(username, password, role, barangay, id, null, null, null);
+    }
+    
+    /**
      * Creates a new user in the database (overloaded method without ID for backward compatibility).
      * @param username The username
      * @param password The password
@@ -58,7 +78,7 @@ public class UserDAO {
      * @throws SQLException if database error occurs
      */
     public static boolean createUser(String username, String password, String role, String barangay) throws SQLException {
-        return createUser(username, password, role, barangay, null);
+        return createUser(username, password, role, barangay, null, null, null, null);
     }
     
     /**
@@ -85,6 +105,77 @@ public class UserDAO {
         }
         
         return null; // User not found or password incorrect
+    }
+    
+    /**
+     * Authenticates a user by checking username, password, and ID (for roles that require ID).
+     * For Barangay Captain, City Officer, and Garbage Collector, ID is required. For other roles, ID is optional.
+     * @param username The username
+     * @param password The password
+     * @param id The user's ID (required for Barangay Captain, City Officer, Garbage Collector; optional for others)
+     * @return The user's role if authentication succeeds, null otherwise
+     * @throws SQLException if database error occurs
+     */
+    public static String authenticateUserWithID(String username, String password, String id) throws SQLException {
+        String sql = "SELECT role, id FROM users WHERE username = ? AND password = ?";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, username);
+            pstmt.setString(2, password);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    String role = rs.getString("role");
+                    String storedId = rs.getString("id");
+                    
+                    // For Barangay Captain, City Officer, and Garbage Collector, ID is required and must match
+                    boolean needsId = "Barangay Captain".equals(role) || 
+                                     "City Officer".equals(role) || 
+                                     "Garbage Collector".equals(role);
+                    
+                    if (needsId) {
+                        if (id == null || id.trim().isEmpty()) {
+                            return null; // ID required for these roles
+                        }
+                        // Check if ID matches (case-insensitive, handle null stored ID)
+                        if (storedId == null || !storedId.trim().equalsIgnoreCase(id.trim())) {
+                            return null; // ID doesn't match
+                        }
+                    }
+                    // For other roles, ID is optional (not checked)
+                    
+                    return role;
+                }
+            }
+        }
+        
+        return null; // User not found or password incorrect
+    }
+    
+    /**
+     * Gets user ID by username.
+     * @param username The username
+     * @return The user's ID or null if not found or no ID set
+     * @throws SQLException if database error occurs
+     */
+    public static String getUserID(String username) throws SQLException {
+        String sql = "SELECT id FROM users WHERE username = ?";
+        
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, username);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("id");
+                }
+            }
+        }
+        
+        return null; // User not found
     }
     
     /**
