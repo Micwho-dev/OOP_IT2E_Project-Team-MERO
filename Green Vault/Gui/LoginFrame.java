@@ -3,81 +3,193 @@ package gui;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 import services.UserAuthenticationService;
 
-/**
- * Login frame for user authentication.
- */
 public class LoginFrame extends JFrame {
     private JTextField userField;
     private JPasswordField passField;
+    private JTextField idField;
+    private JCheckBox showPasswordCheckBox;
 
     public LoginFrame() {
         setTitle("GreenVault - Login");
-        setSize(400, 350); 
+        setSize(420, 500); // Slightly taller for better spacing
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
+        setResizable(false);
         setLayout(new BorderLayout());
-        getContentPane().setBackground(UIConstants.BACKGROUND_GRAY);
-
+        
+        // --- Header Section ---
         JPanel headerPanel = new JPanel();
         headerPanel.setBackground(UIConstants.ACCENT_GREEN);
-        JLabel titleLabel = new JLabel("GreenVault Access");
+        headerPanel.setPreferredSize(new Dimension(420, 80));
+        headerPanel.setLayout(new GridBagLayout());
+        
+        JLabel titleLabel = new JLabel("GREENVAULT");
         titleLabel.setForeground(Color.BLACK);
-        titleLabel.setFont(new Font("Arial", Font.BOLD, 22));
+        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 26));
         headerPanel.add(titleLabel);
 
-        JPanel formPanel = new JPanel(new GridLayout(3, 2, 10, 10));
-        formPanel.setBorder(new EmptyBorder(30, 30, 30, 30));
+        // --- Form Section ---
+        JPanel formPanel = new JPanel(new GridBagLayout());
+        formPanel.setBorder(new EmptyBorder(30, 40, 20, 40));
         formPanel.setBackground(UIConstants.BACKGROUND_GRAY);
         
-        formPanel.add(new JLabel("Username:"));
-        userField = new JTextField();
-        formPanel.add(userField);
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(8, 0, 8, 0);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.gridx = 0;
+        gbc.weightx = 1.0;
 
-        formPanel.add(new JLabel("Password:"));
+        // Labels and Fields
+        formPanel.add(createStyledLabel("Username"), gbc);
+        userField = createStyledTextField();
+        formPanel.add(userField, gbc);
+
+        formPanel.add(createStyledLabel("Password"), gbc);
         passField = new JPasswordField();
-        formPanel.add(passField);
+        styleComponent(passField);
+        formPanel.add(passField, gbc);
 
+        // Show Password (Smaller, cleaner)
+        showPasswordCheckBox = new JCheckBox("Show Password");
+        showPasswordCheckBox.setBackground(UIConstants.BACKGROUND_GRAY);
+        showPasswordCheckBox.setFont(new Font("Segoe UI", Font.ITALIC, 11));
+        showPasswordCheckBox.setFocusPainted(false);
+        showPasswordCheckBox.addActionListener(e -> {
+            if (showPasswordCheckBox.isSelected()) {
+                passField.setEchoChar((char) 0);
+            } else {
+                passField.setEchoChar('•');
+            }
+        });
+        formPanel.add(showPasswordCheckBox, gbc);
+
+        formPanel.add(createStyledLabel("ID (Staff Only)"), gbc);
+        idField = createStyledTextField();
+        idField.setToolTipText("Required for Captains, Officers, and Collectors");
+        formPanel.add(idField, gbc);
+
+        // --- Button Section ---
         JPanel btnPanel = new JPanel(new GridLayout(1, 2, 15, 0));
-        btnPanel.setBorder(new EmptyBorder(0, 30, 20, 30));
+        btnPanel.setBorder(new EmptyBorder(10, 40, 40, 40));
         btnPanel.setBackground(UIConstants.BACKGROUND_GRAY);
 
         JButton loginBtn = new JButton("Login");
-        loginBtn.setBackground(UIConstants.PRIMARY_GREEN);
-        loginBtn.setForeground(Color.BLACK);
+        styleButton(loginBtn, UIConstants.PRIMARY_GREEN, Color.BLACK);
 
         JButton registerBtn = new JButton("Sign Up");
-        registerBtn.setBackground(new Color(150, 150, 150)); 
-        registerBtn.setForeground(Color.BLACK);
+        styleButton(registerBtn, new Color(200, 200, 200), Color.BLACK);
 
         btnPanel.add(registerBtn);
         btnPanel.add(loginBtn);
 
-        loginBtn.addActionListener(e -> {
-            String user = userField.getText();
-            String pass = new String(passField.getPassword());
-            
-            String role = UserAuthenticationService.checkUserInDB(user, pass); 
-            
-            if (role != null) {
-                Object[] userInfo = UserAuthenticationService.getUserInfo(user);
-                String barangay = (String) userInfo[1];
-                new DashboardFrame(user, role, barangay).setVisible(true);
-                this.dispose();
-            } else {
-                JOptionPane.showMessageDialog(this, "Invalid Credentials", "Login Failed", JOptionPane.ERROR_MESSAGE);
+        // --- Logic & Listeners ---
+        loginBtn.addActionListener(e -> handleLogin());
+        
+        // Enter key to login
+        KeyAdapter enterKeyHandler = new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.VK_ENTER) handleLogin();
             }
-        });
+        };
+        userField.addKeyListener(enterKeyHandler);
+        passField.addKeyListener(enterKeyHandler);
+        idField.addKeyListener(enterKeyHandler);
 
         registerBtn.addActionListener(e -> {
             new RegisterFrame().setVisible(true);
-            this.dispose(); 
+            this.dispose();
         });
 
         add(headerPanel, BorderLayout.NORTH);
         add(formPanel, BorderLayout.CENTER);
         add(btnPanel, BorderLayout.SOUTH);
     }
-}
 
+    private void handleLogin() {
+        String user = userField.getText().trim();
+        String pass = new String(passField.getPassword());
+        String id = idField.getText().trim();
+
+        if (user.isEmpty() || pass.isEmpty()) {
+            showError("Please enter both username and password.");
+            return;
+        }
+
+        String role = UserAuthenticationService.checkUserInDBWithID(user, pass, id.isEmpty() ? null : id);
+        
+        if (role != null) {
+            if (isStaffRole(role) && id.isEmpty()) {
+                showError("ID is required for " + role + " login.");
+                return;
+            }
+            
+            Object[] userInfo = UserAuthenticationService.getUserInfo(user);
+            if (userInfo != null) {
+                new DashboardFrame(user, role, (String) userInfo[1]).setVisible(true);
+                this.dispose();
+            }
+        } else {
+            handleLoginFailure(user, pass);
+        }
+    }
+
+    private boolean isStaffRole(String role) {
+        return "Barangay Captain".equals(role) || "City Officer".equals(role) || "Garbage Collector".equals(role);
+    }
+
+    private void handleLoginFailure(String user, String pass) {
+        String tempRole = UserAuthenticationService.checkUserInDB(user, pass);
+        if (isStaffRole(tempRole)) {
+            showError("Invalid ID for " + tempRole + ".");
+        } else {
+            showError("Invalid Credentials.");
+        }
+    }
+
+    // --- UI Helper Methods for Smoothness ---
+
+    private JLabel createStyledLabel(String text) {
+        JLabel label = new JLabel(text);
+        label.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        label.setForeground(new Color(70, 70, 70));
+        return label;
+    }
+
+    private JTextField createStyledTextField() {
+        JTextField field = new JTextField();
+        styleComponent(field);
+        return field;
+    }
+
+    private void styleComponent(JComponent comp) {
+        comp.setPreferredSize(new Dimension(0, 35));
+        comp.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        comp.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(200, 200, 200), 1),
+            BorderFactory.createEmptyBorder(5, 10, 5, 10)
+        ));
+    }
+
+    private void styleButton(JButton btn, Color bg, Color fg) {
+        btn.setBackground(bg);
+        btn.setForeground(fg);
+        btn.setFocusPainted(false);
+        btn.setBorderPainted(false);
+        btn.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        // Simple hover effect
+        btn.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseEntered(java.awt.event.MouseEvent evt) { btn.setBackground(bg.darker()); }
+            public void mouseExited(java.awt.event.MouseEvent evt) { btn.setBackground(bg); }
+        });
+    }
+
+    private void showError(String msg) {
+        JOptionPane.showMessageDialog(this, msg, "Login Update", JOptionPane.ERROR_MESSAGE);
+    }
+}
