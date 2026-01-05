@@ -16,15 +16,10 @@ public class BarangayAreaMapper {
         
         AREA_MAP.put("Central", new String[]{"Select Area", "Madang", "Upper Madang", "Lower Madang", "Lemente","Balintong","Calagundian","Bilawan","Chan Village","Magsaysay","Tambiling","Don Louis","Donya Rosa","Magapo","Santo Nino","Sudlon"});
         AREA_MAP.put("Dahican", new String[]{"Select Area", "NHA", "Dahican Centro", "MINZI", "NASA"});
-        AREA_MAP.put("Matiao", new String[]{"Select Area", "Purok Luyong", "Purok Centro (Matiao)", "Purok Liyang"});
-        AREA_MAP.put("Badas", new String[]{"Select Area", "Badas Proper", "Badas Coastal"});
+        AREA_MAP.put("Matiao", new String[]{"Select Area", "Matiao"});
         
         String[] allMatiBarangays = {
-            "Bobon", "Buso", "Cabuaya", "Culian", "Danao", 
-            "Dawan", "Don Enrique Lopez", "Don Martin Marundan", 
-            "Don Salvador Lopez, Sr.", "Langka", "Lawigan", "Libudon", 
-            "Luban", "Macambol", "Mamali", "Mayo", "Sainz", "Sanghay", 
-            "Tagabakid", "Tagbinonga", "Taguibo", "Tamisan"
+            "Buso", "Don Martin Marundan", "Sainz"
         };
         
         String[] genericAreas = {"Select Area", "Area 1", "Area 2", "Area 3", "Area 4"};
