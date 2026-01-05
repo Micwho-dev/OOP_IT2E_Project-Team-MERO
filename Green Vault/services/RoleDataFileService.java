@@ -13,6 +13,7 @@ public class RoleDataFileService {
     static {
         // Map each role to its corresponding .txt file in data/ folder
         ROLE_FILE_MAP.put("Admin", "data/admin.txt");
+        ROLE_FILE_MAP.put("Super Admin", "data/admin.txt"); // Super Admin uses same file as Admin
         ROLE_FILE_MAP.put("Barangay Captain", "data/barangaycaptain.txt");
         ROLE_FILE_MAP.put("City Officer", "data/cityofficer.txt");
         ROLE_FILE_MAP.put("Garbage Collector", "data/garbagecollector.txt");
